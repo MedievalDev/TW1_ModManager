@@ -19,6 +19,10 @@ Drop a `.wd` onto the window, answer one question, play.
   moves the archive to `Mods\_removed\`, replacing keeps a `.backup`.
 - **Verified mods from the community server** (`mods.json` on
   alchemy-fox.de): download, SHA-256 check, enable.
+- **Community archive on GitHub:** the folder `Two Worlds` of
+  [InsideTwoWorlds/MODs](https://github.com/InsideTwoWorlds/MODs/tree/main/Two%20Worlds)
+  as a third tab — every `.wd` with its description, download checked
+  against the git blob hash GitHub keeps for the file.
 - **Guide inside the tool** (F1): chapters, search, registry reference. Gold
   `?` marks open the matching chapter. Tour on first start.
 - **Self-update from GitHub:** check on start (switchable), SHA-256
@@ -70,6 +74,15 @@ Latest exe: `https://github.com/MedievalDev/TW1_ModManager/releases/latest/downl
 CC0 — do what you want with it.
 
 ## Changelog
+
+### v2.1.0 (16.09.2026)
+
+- Third tab **Community (GitHub)**: the mods of `InsideTwoWorlds/MODs`
+  (folder `Two Worlds`, 40+ archives) with size, description from the
+  `.wd.txt` next to each file, "installed / update available / not
+  installed" by comparing the git blob SHA-1, install or update with one
+  click or a double-click. Downloads are verified against GitHub's hash.
+- One download routine for both lists (`download_file`).
 
 ### v2.0.0 (16.09.2026)
 

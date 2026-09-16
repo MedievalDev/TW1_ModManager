@@ -57,6 +57,12 @@ COMMUNITY_URL = 'https://twmp.alchemy-fox.de/'
 LINKS = (('GitHub-Repo', GITHUB_URL), ('Alchemy Fox', SITE_URL),
          ('Guide-Seite', GUIDE_URL), ('Community', COMMUNITY_URL))
 MODS_URL = 'https://alchemy-fox.de/game/TW1_DialogAndQuestCreator/mods/mods.json'
+# Community archive on GitHub: one .wd per mod, a .wd.txt next to it with the
+# description. The API lists the folder with size and git blob sha per file,
+# which doubles as the checksum after download.
+GH_API = 'https://api.github.com/repos/InsideTwoWorlds/MODs/contents/Two%20Worlds'
+GH_PAGE = 'https://github.com/InsideTwoWorlds/MODs/tree/main/Two%20Worlds'
+GH_NAME = 'InsideTwoWorlds / MODs'
 REG_MODS = r'SOFTWARE\Reality Pump\TwoWorlds\Mods'
 GAME_EXES = ('TwoWorlds.exe', 'TwoWorldsExtended.exe', 'TwoWorlds_RADEON.exe')
 WD_MAGIC = bytes([0xFF, 0xA1, 0xD0, 0x31, 0x57, 0x44, 0x00, 0x02])
@@ -221,6 +227,55 @@ def sha256_of(path):
     return h.hexdigest()
 
 
+def git_blob_sha1(path):
+    """The sha GitHub shows for a file: sha1 of 'blob <size>\\0' + content."""
+    h = hashlib.sha1()
+    h.update(f'blob {os.path.getsize(path)}'.encode() + b'\x00')
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def http_get(url, timeout=20):
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': updater.USER_AGENT,
+                                               'Accept': 'application/vnd.github+json'})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def download_file(url, dest, size=0, sha256=None, blob_sha1=None, progress=None):
+    """Download to dest + '.download', verify (SHA-256 or git blob sha1), then
+    move into place; an existing dest is kept as .backup once. Raises on a
+    checksum mismatch and removes the download."""
+    import urllib.request
+    tmp = dest + '.download'
+    req = urllib.request.Request(url, headers={'User-Agent': updater.USER_AGENT})
+    done = 0
+    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as f:
+        while True:
+            chunk = r.read(1 << 18)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, size)
+    if sha256 and sha256_of(tmp) != sha256:
+        os.remove(tmp)
+        raise ValueError(tr('checksum mismatch - download discarded'))
+    if blob_sha1 and git_blob_sha1(tmp) != blob_sha1:
+        os.remove(tmp)
+        raise ValueError(tr('checksum mismatch - download discarded'))
+    if os.path.exists(dest):
+        backup = dest + '.backup'
+        if not os.path.exists(backup):
+            shutil.copy2(dest, backup)
+    os.replace(tmp, dest)
+    return dest
+
+
 # ---------------------------------------------------------------- WD peek --
 
 def wd_peek(path):
@@ -378,8 +433,9 @@ GUIDE_STEPS = [
      'Enable / disable flips the registry switch. Remove moves the archive to Mods\\_removed and '
      'keeps it. Changes count from the next game start.'},
     {'title': 'Server', 'widget': 'notebook', 'text':
-     'The second tab lists verified mods from alchemy-fox.de. Install downloads, checks the '
-     'SHA-256 and enables the mod; an existing archive is kept as .backup.'},
+     'The second tab lists verified mods from alchemy-fox.de, the third the community archive '
+     'of InsideTwoWorlds on GitHub with a description per mod. Install downloads, checks the '
+     'checksum and enables the mod; an existing archive is kept as .backup.'},
     {'title': 'Help', 'widget': 'menubar', 'text':
      'F1 opens the guide with chapters, search and the registry reference. The gold ? marks jump '
      'straight to the matching chapter. Help also checks for updates.'},
@@ -573,6 +629,8 @@ class App:
         self._icon()
         self.restart = False
         self.catalog = None
+        self.github = None            # [{name, size, sha, url, txt_url}] once fetched
+        self.gh_desc = {}             # name -> description text (from <name>.txt)
         self.update_var = tk.BooleanVar(value=bool(self.cfg.get('update_check', True)))
         self.guide = Guide(self)
 
@@ -630,6 +688,7 @@ class App:
                 return
         self.refresh()
         threading.Thread(target=self._fetch_catalog, daemon=True).start()
+        threading.Thread(target=self._fetch_github, daemon=True).start()
         if self.selftest:
             self._run_selftest()
             return
@@ -684,6 +743,7 @@ class App:
         self.notebook.pack(fill='both', expand=True, padx=12, pady=(0, 6))
         self.notebook.add(self._tab_installed(self.notebook), text='  ' + tr('Installed mods') + '  ')
         self.notebook.add(self._tab_server(self.notebook), text='  ' + tr('My Mods (server)') + '  ')
+        self.notebook.add(self._tab_github(self.notebook), text='  ' + tr('Community (GitHub)') + '  ')
 
     def build_menubar(self):
         bar = ttk.Frame(self.root, style='Menubar.TFrame')
@@ -731,6 +791,7 @@ class App:
     def _fill_view(self, m):
         m.add_command(label=tr('Installed mods'), command=lambda: self.notebook.select(0))
         m.add_command(label=tr('My Mods (server)'), command=lambda: self.notebook.select(1))
+        m.add_command(label=tr('Community (GitHub)'), command=lambda: self.notebook.select(2))
         m.add_separator()
         sub = theme.Menu(m)
         for code, name in (('de', 'Deutsch'), ('en', 'English')):
@@ -827,6 +888,44 @@ class App:
                   ).pack(anchor='w', pady=(8, 0))
         return tab
 
+    def _tab_github(self, parent):
+        tab = ttk.Frame(parent, padding=12)
+        hdr = ttk.Frame(tab)
+        hdr.pack(fill='x', pady=(0, 4))
+        ttk.Label(hdr, text=tr('Mods from the InsideTwoWorlds archive on GitHub'), style='Muted.TLabel').pack(side='left')
+        help_mark(hdr, tr('The folder "Two Worlds" of github.com/InsideTwoWorlds/MODs: every .wd with its description. Install downloads the file and checks it against the checksum GitHub stores for it.'), 'server', self)
+        lnk = ttk.Label(hdr, text=GH_NAME, style='Link.TLabel', cursor='hand2')
+        lnk.pack(side='right')
+        lnk.bind('<Button-1>', lambda e: webbrowser.open(GH_PAGE))
+        self.gtree = ttk.Treeview(tab, columns=('size', 'status'), show='tree headings')
+        self.gtree.heading('#0', text=tr('Mod archive'))
+        self.gtree.heading('size', text=tr('Size'))
+        self.gtree.heading('status', text=tr('On this PC'))
+        self.gtree.column('#0', width=360)
+        self.gtree.column('size', width=90, anchor='e')
+        self.gtree.column('status', width=160, anchor='center')
+        self.gtree.pack(fill='both', expand=True)
+        self.gtree.tag_configure('on', foreground=theme.OK)
+        self.gtree.tag_configure('get', foreground=theme.GOLD)
+        self.gtree.tag_configure('off', foreground=theme.MUT)
+        self.gtree.bind('<<TreeviewSelect>>', lambda ev: self._show_gh_desc())
+        self.gtree.bind('<Double-1>', lambda ev: self.install_github_mod())
+        self.lbl_gdesc = ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left')
+        self.lbl_gdesc.pack(anchor='w', pady=(8, 0))
+        btns = ttk.Frame(tab)
+        btns.pack(fill='x', pady=(10, 0))
+        self.btn_ginstall = ttk.Button(btns, text=tr('Install / update'), style='Accent.TButton',
+                                       command=self.install_github_mod)
+        self.btn_ginstall.pack(side='left')
+        ttk.Button(btns, text=tr('Reload list'),
+                   command=lambda: threading.Thread(target=self._fetch_github, daemon=True).start()
+                   ).pack(side='left', padx=6)
+        ttk.Button(btns, text=tr('Open on GitHub'), command=lambda: webbrowser.open(GH_PAGE)).pack(side='right')
+        ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left',
+                  text=tr('Community mods collected by InsideTwoWorlds. Each download is checked against the file hash GitHub stores; existing archives get a .backup copy before an update. Read the description before you install.')
+                  ).pack(anchor='w', pady=(8, 0))
+        return tab
+
     def _bind_keys(self):
         r = self.root
         r.bind('<Control-o>', lambda e: self.add_mod())
@@ -904,6 +1003,7 @@ class App:
             self.tree.insert('', 'end', iid='ROOT::' + name, text=name + '  ' + tr('(in the game folder!)'),
                              values=(tr('ALWAYS loads'), '', ''), tags=('warn',))
         self._refresh_server_states()
+        self._refresh_github_states()
         on = sum(1 for n in files if reg.get(n, 0))
         self.status(tr('{n} archives, {m} enabled').format(n=len(files), m=on))
 
@@ -1078,38 +1178,117 @@ class App:
 
     def _download(self, mod):
         try:
-            import urllib.request
             dest = os.path.join(self.mods_dir, mod['file'])
-            tmp = dest + '.download'
             self.status(tr('Downloading {name}...').format(name=mod['name']))
-            req = urllib.request.Request(mod['url'], headers={'User-Agent': updater.USER_AGENT})
-            with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as f:
-                total = mod.get('size') or 0
-                done = 0
-                while True:
-                    chunk = r.read(1 << 18)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    done += len(chunk)
-                    if total:
-                        self.status(tr('Downloading {name}... {p}%').format(name=mod['name'], p=done * 100 // total))
-            if mod.get('sha256'):
-                got = sha256_of(tmp)
-                if got != mod['sha256']:
-                    os.remove(tmp)
-                    raise ValueError(tr('checksum mismatch - download discarded'))
-            if os.path.exists(dest):
-                backup = dest + '.backup'
-                if not os.path.exists(backup):
-                    shutil.copy2(dest, backup)
-            os.replace(tmp, dest)
+            download_file(mod['url'], dest, mod.get('size') or 0, sha256=mod.get('sha256'),
+                          progress=lambda d, t: self.status(tr('Downloading {name}... {p}%').format(
+                              name=mod['name'], p=d * 100 // t if t else 0)))
             registry_set(mod['file'], 1)
             self.status(tr('{name} installed and enabled.').format(name=mod['name']))
         except Exception as exc:
             self.status(tr('Install failed: {e}').format(e=exc), error=True)
         finally:
             self.root.after(0, lambda: (self.btn_install.state(['!disabled']), self.refresh()))
+
+    # ---- GitHub archive (InsideTwoWorlds/MODs) ----
+    def _fetch_github(self):
+        self.status(tr('Loading the GitHub list...'))
+        try:
+            entries = json.loads(http_get(GH_API).decode('utf-8'))
+            if not isinstance(entries, list):
+                raise ValueError(entries.get('message', 'unexpected answer'))
+            txts = {e['name']: e['download_url'] for e in entries if e['type'] == 'file' and e['name'].lower().endswith('.txt')}
+            mods = []
+            for e in entries:
+                if e['type'] != 'file' or not e['name'].lower().endswith('.wd'):
+                    continue
+                mods.append({'name': e['name'], 'size': e['size'], 'sha': e['sha'], 'url': e['download_url'],
+                             'txt_url': txts.get(e['name'] + '.txt') or txts.get(e['name'][:-3] + '.td.txt')})
+            self.github = sorted(mods, key=lambda m: m['name'].lower())
+        except Exception as exc:
+            self.status(tr('GitHub list not available: {e}').format(e=exc), error=True)
+            return
+        self.status(tr('GitHub list loaded - {n} mod(s).').format(n=len(self.github)))
+        self.root.after(0, self._refresh_github_states)
+
+    def _refresh_github_states(self):
+        if self.github is None or not hasattr(self, 'gtree'):
+            return
+        sel = self.gtree.selection()
+        self.gtree.delete(*self.gtree.get_children())
+        reg = registry_mods()
+        for mod in self.github:
+            local = os.path.join(self.mods_dir, mod['name'])
+            if not os.path.exists(local):
+                state, tag = tr('not installed'), 'get'
+            elif os.path.getsize(local) != mod['size'] or git_blob_sha1(local) != mod['sha']:
+                state, tag = tr('update available'), 'get'
+            elif reg.get(mod['name'], 0):
+                state, tag = tr('installed · enabled'), 'on'
+            else:
+                state, tag = tr('installed · disabled'), 'off'
+            self.gtree.insert('', 'end', iid=mod['name'], text=mod['name'],
+                              values=(fmt_size(mod['size']), state), tags=(tag,))
+        if sel and self.gtree.exists(sel[0]):
+            self.gtree.selection_set(sel[0])
+
+    def _show_gh_desc(self):
+        sel = self.gtree.selection()
+        if not sel or self.github is None:
+            return
+        name = sel[0]
+        mod = next((m for m in self.github if m['name'] == name), None)
+        if mod is None:
+            return
+        if name in self.gh_desc:
+            self.lbl_gdesc.configure(text=self.gh_desc[name])
+            return
+        if not mod['txt_url']:
+            self.gh_desc[name] = tr('(no description in the archive)')
+            self.lbl_gdesc.configure(text=self.gh_desc[name])
+            return
+        self.lbl_gdesc.configure(text=tr('loading description...'))
+
+        def work():
+            try:
+                text = http_get(mod['txt_url']).decode('utf-8', 'replace').strip()
+            except Exception as exc:
+                text = tr('(description not available: {e})').format(e=exc)
+            self.gh_desc[name] = text[:1200]
+
+            def show():
+                cur = self.gtree.selection()
+                if cur and cur[0] == name:
+                    self.lbl_gdesc.configure(text=self.gh_desc[name])
+            self.root.after(0, show)
+        threading.Thread(target=work, daemon=True).start()
+
+    def install_github_mod(self):
+        sel = self.gtree.selection()
+        if not sel or self.github is None:
+            return
+        mod = next((m for m in self.github if m['name'] == sel[0]), None)
+        if mod is None:
+            return
+        if game_running():
+            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            return
+        self.btn_ginstall.state(['disabled'])
+
+        def work():
+            try:
+                dest = os.path.join(self.mods_dir, mod['name'])
+                self.status(tr('Downloading {name}...').format(name=mod['name']))
+                download_file(mod['url'], dest, mod['size'], blob_sha1=mod['sha'],
+                              progress=lambda d, t: self.status(tr('Downloading {name}... {p}%').format(
+                                  name=mod['name'], p=d * 100 // t if t else 0)))
+                registry_set(mod['name'], 1)
+                self.status(tr('{name} installed and enabled.').format(name=mod['name']))
+            except Exception as exc:
+                self.status(tr('Install failed: {e}').format(e=exc), error=True)
+            finally:
+                self.root.after(0, lambda: (self.btn_ginstall.state(['!disabled']), self.refresh()))
+        threading.Thread(target=work, daemon=True).start()
 
     # ---- updates ----
     def _toggle_update_check(self):
@@ -1331,8 +1510,17 @@ DE = {
         'Eine .wd aus dem Explorer irgendwo auf dieses Fenster ziehen. Ein Fenster zeigt, was drin ist, und fragt: einlegen und einschalten, nur einlegen, oder abbrechen. Strg+O macht dasselbe ueber den Dateidialog.',
     'Enable / disable flips the registry switch. Remove moves the archive to Mods\\_removed and keeps it. Changes count from the next game start.':
         'Ein / aus kippt den Registry-Schalter. Entfernen verschiebt das Archiv nach Mods\\_removed und behaelt es. Aenderungen gelten ab dem naechsten Spielstart.',
-    'The second tab lists verified mods from alchemy-fox.de. Install downloads, checks the SHA-256 and enables the mod; an existing archive is kept as .backup.':
-        'Der zweite Reiter zeigt gepruefte Mods von alchemy-fox.de. Install laedt, prueft die SHA-256 und schaltet ein; ein vorhandenes Archiv bleibt als .backup.',
+    'The second tab lists verified mods from alchemy-fox.de, the third the community archive of InsideTwoWorlds on GitHub with a description per mod. Install downloads, checks the checksum and enables the mod; an existing archive is kept as .backup.':
+        'Der zweite Reiter zeigt gepruefte Mods von alchemy-fox.de, der dritte das Community-Archiv von InsideTwoWorlds auf GitHub mit einer Beschreibung je Mod. Install laedt, prueft die Pruefsumme und schaltet ein; ein vorhandenes Archiv bleibt als .backup.',
+    'Community (GitHub)': 'Community (GitHub)', 'Mods from the InsideTwoWorlds archive on GitHub': 'Mods aus dem InsideTwoWorlds-Archiv auf GitHub',
+    'The folder "Two Worlds" of github.com/InsideTwoWorlds/MODs: every .wd with its description. Install downloads the file and checks it against the checksum GitHub stores for it.':
+        'Der Ordner "Two Worlds" von github.com/InsideTwoWorlds/MODs: jede .wd mit ihrer Beschreibung. Install laedt die Datei und prueft sie gegen die Pruefsumme, die GitHub dafuer fuehrt.',
+    'Open on GitHub': 'Auf GitHub oeffnen',
+    'Community mods collected by InsideTwoWorlds. Each download is checked against the file hash GitHub stores; existing archives get a .backup copy before an update. Read the description before you install.':
+        'Community-Mods, gesammelt von InsideTwoWorlds. Jeder Download wird gegen den Datei-Hash von GitHub geprueft; vorhandene Archive bekommen vor einem Update eine .backup-Kopie. Vor dem Einlegen die Beschreibung lesen.',
+    'Loading the GitHub list...': 'Lade die GitHub-Liste...', 'GitHub list not available: {e}': 'GitHub-Liste nicht erreichbar: {e}',
+    'GitHub list loaded - {n} mod(s).': 'GitHub-Liste geladen - {n} Mod(s).', '(no description in the archive)': '(keine Beschreibung im Archiv)',
+    'loading description...': 'lade Beschreibung...', '(description not available: {e})': '(Beschreibung nicht erreichbar: {e})',
     'F1 opens the guide with chapters, search and the registry reference. The gold ? marks jump straight to the matching chapter. Help also checks for updates.':
         'F1 oeffnet den Guide mit Kapiteln, Suche und der Registry-Referenz. Die goldenen ?-Marken springen direkt ins passende Kapitel. Hilfe sucht auch nach Updates.',
     'Update': 'Update', 'GitHub was not reachable: {err}': 'GitHub war nicht erreichbar: {err}',

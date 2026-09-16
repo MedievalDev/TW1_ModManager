@@ -229,6 +229,19 @@ SHA-256, legt bei Ersatz ein `.backup` an und schaltet ein. Stimmt die
 Pruefsumme nicht, wird der Download verworfen und nichts geaendert.
 
 Ohne Internet bleibt der Reiter leer; die Statusleiste sagt warum.
+
+## Community (GitHub)
+
+Der dritte Reiter zeigt den Ordner "Two Worlds" des Archivs
+`github.com/InsideTwoWorlds/MODs`: jede `.wd` mit Groesse, und wo eine
+`.wd.txt` daneben liegt, ihre Beschreibung (erscheint beim Anklicken).
+Install laedt die Datei von GitHub und prueft sie gegen den Hash, den
+GitHub fuer die Datei fuehrt (git-Blob-SHA1); "update available" heisst,
+die Datei im Mods-Ordner hat einen anderen Hash als die auf GitHub.
+Doppelklick auf eine Zeile installiert ebenfalls.
+
+Die Mods dort stammen von verschiedenen Autoren; die Beschreibung sagt,
+was sie tun und ob sie sich mit anderen vertragen. Lesen, dann einlegen.
 ''', '''# Mods from the server
 
 The "My Mods (server)" tab reads `mods.json` from alchemy-fox.de: name,
@@ -244,6 +257,19 @@ SHA-256, keeps a `.backup` when replacing and enables the mod. If the
 checksum does not match, the download is discarded and nothing changes.
 
 Without internet the tab stays empty; the status bar says why.
+
+## Community (GitHub)
+
+The third tab shows the folder "Two Worlds" of the archive
+`github.com/InsideTwoWorlds/MODs`: every `.wd` with its size, and where a
+`.wd.txt` sits next to it, its description (shown when you click the
+row). Install downloads the file from GitHub and checks it against the
+hash GitHub keeps for the file (git blob SHA-1); "update available" means
+the file in the Mods folder has a different hash than the one on GitHub.
+Double-clicking a row installs as well.
+
+The mods there come from different authors; the description says what
+they do and whether they get along with others. Read, then install.
 ''')
 
 
@@ -337,7 +363,7 @@ CHAPTERS = (
     ('start', ('Einstieg', 'Getting started'), ch_start),
     ('install', ('Mod einlegen', 'Installing a mod'), ch_install),
     ('switch', ('Ein- und ausschalten', 'Enabling and disabling'), ch_switch),
-    ('server', ('Mods vom Server', 'Mods from the server'), ch_server),
+    ('server', ('Mods vom Server und von GitHub', 'Mods from the server and GitHub'), ch_server),
     ('reference', ('Referenztabellen', 'Reference tables'), ch_reference),
     ('trouble', ('Fehlersuche', 'Troubleshooting'), ch_trouble),
 )
