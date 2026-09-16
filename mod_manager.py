@@ -287,6 +287,10 @@ def enable_drop(root, callback):
     Tk gives every widget its own HWND on Windows, so the toplevel and all
     of its children are registered; a drop anywhere in the window lands in
     ``callback(list_of_paths)`` on the Tk thread."""
+    if getattr(root, '_drop_procs', None):
+        # Registering twice would free the first callbacks while the windows
+        # still point at them - the second proc then calls freed memory.
+        return len(root._drop_procs)
     user32, shell32 = ctypes.windll.user32, ctypes.windll.shell32
     user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
     user32.SetWindowLongPtrW.argtypes = (wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t)
@@ -314,15 +318,18 @@ def enable_drop(root, callback):
     def make(h):
         def proc(hwnd, msg, wp, lp):
             if msg == WM_DROPFILES:
-                n = shell32.DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
-                files = []
-                for i in range(n):
-                    ln = shell32.DragQueryFileW(wp, i, None, 0)
-                    buf = ctypes.create_unicode_buffer(ln + 1)
-                    shell32.DragQueryFileW(wp, i, buf, ln + 1)
-                    files.append(buf.value)
-                shell32.DragFinish(wp)
-                root.after(0, callback, files)
+                try:
+                    n = shell32.DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
+                    files = []
+                    for i in range(n):
+                        ln = shell32.DragQueryFileW(wp, i, None, 0)
+                        buf = ctypes.create_unicode_buffer(ln + 1)
+                        shell32.DragQueryFileW(wp, i, buf, ln + 1)
+                        files.append(buf.value)
+                    shell32.DragFinish(wp)
+                    root.after(0, callback, files)
+                except Exception:
+                    pass
                 return 0
             return user32.CallWindowProcW(olds[h], hwnd, msg, wp, lp)
         return _WNDPROC(proc)
@@ -332,7 +339,11 @@ def enable_drop(root, callback):
         procs.append(cb)                       # keep the callbacks alive
         olds[h] = user32.SetWindowLongPtrW(h, GWLP_WNDPROC, ctypes.cast(cb, ctypes.c_void_p).value)
     root._drop_procs = procs
+    _DROP_KEEP.append(procs)                   # and never let them be collected
     return len(hwnds)
+
+
+_DROP_KEEP = []
 
 
 # ---------------------------------------------------------------- Helpers --
@@ -597,6 +608,9 @@ class App:
 
     # ---- start-up ----
     def _startup(self):
+        if getattr(self, '_started', False):
+            return
+        self._started = True
         updater.cleanup_old()
         try:
             n = enable_drop(self.root, self.on_drop)
