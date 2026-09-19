@@ -341,7 +341,14 @@ def enable_drop(root, callback):
 
     Tk gives every widget its own HWND on Windows, so the toplevel and all
     of its children are registered; a drop anywhere in the window lands in
-    ``callback(list_of_paths)`` on the Tk thread."""
+    ``callback(list_of_paths)`` on the Tk thread.
+
+    A window procedure runs inside Windows' message handling and therefore
+    does no Tk call at all: it only fills an inbox that Tk empties from its
+    own event loop. Calling Tk from inside it ended the process without a
+    word on a real drop from Explorer (measured on the WD Packer,
+    19.09.2026); a simulated message never hits that, because it comes from
+    the Tk thread itself."""
     if getattr(root, '_drop_procs', None):
         # Registering twice would free the first callbacks while the windows
         # still point at them - the second proc then calls freed memory.
@@ -369,6 +376,15 @@ def enable_drop(root, callback):
     user32.EnumChildWindows(top, enum_proc(collect), 0)
     olds = {}
     procs = []
+    inbox = []                                 # paths a window procedure collected
+
+    def pump():
+        while inbox:
+            callback(inbox.pop(0))
+        try:
+            root.after(120, pump)
+        except Exception:
+            pass                               # window gone
 
     def make(h):
         def proc(hwnd, msg, wp, lp):
@@ -382,7 +398,7 @@ def enable_drop(root, callback):
                         shell32.DragQueryFileW(wp, i, buf, ln + 1)
                         files.append(buf.value)
                     shell32.DragFinish(wp)
-                    root.after(0, callback, files)
+                    inbox.append(files)     # no Tk call inside a window procedure
                 except Exception:
                     pass
                 return 0
@@ -395,6 +411,7 @@ def enable_drop(root, callback):
         olds[h] = user32.SetWindowLongPtrW(h, GWLP_WNDPROC, ctypes.cast(cb, ctypes.c_void_p).value)
     root._drop_procs = procs
     _DROP_KEEP.append(procs)                   # and never let them be collected
+    root.after(120, pump)
     return len(hwnds)
 
 
@@ -632,24 +649,75 @@ class App:
         self.github = None            # [{name, size, sha, url, txt_url}] once fetched
         self.gh_desc = {}             # name -> description text (from <name>.txt)
         self.update_var = tk.BooleanVar(value=bool(self.cfg.get('update_check', True)))
+        self.cache_var = tk.BooleanVar(value=bool(self.cfg.get('auto_level_cache', True)))
         self.guide = Guide(self)
+        self.tr = tr
+        self.APP_NAME = APP_NAME
+        self.data_dir = data_dir
+        self.registry_set = lambda name, value: registry_set(name, value)
+        self.registry_delete = lambda name: registry_delete(name)
+        self.merging = False
+        import mergeui
+        self.insight = mergeui.Insight(self)
 
         self.game_dir = find_game_dir(self.cfg.get('game_dir'))
         self.mods_dir = os.path.join(self.game_dir, 'Mods') if self.game_dir else None
         if self.mods_dir:
             os.makedirs(self.mods_dir, exist_ok=True)
 
+        self._init_feedback()
         self.build()
         self.place_window()
         self.root.deiconify()
         self.root.after(200, self._startup)
+
+    def _init_feedback(self):
+        """Help > Test what is untested / Known issues / Report a bug, and the
+        "new in this version" window (skill tw1-testfenster). Nothing is
+        sent without the preview window and its button."""
+        import foxfeedback_ui
+        base = getattr(sys, '_MEIPASS', HERE)
+
+        def cfg_set(key, value):
+            self.cfg[key] = value
+            self.cfg.save()
+        self.fb = foxfeedback_ui.FeedbackUI(
+            self.root, 'modmanager', VERSION,
+            cfg_get=lambda k, d=None: self.cfg.get(k, d), cfg_set=cfg_set,
+            lang=_LANG, tests_file=os.path.join(base, 'untested.json'),
+            open_guide=self.show_guide, tool_name='TW1 Mod Manager',
+            launcher=foxfeedback_ui.tw1_launcher(self.game_dir) if self.game_dir else None)
+        self.root.report_callback_exception = self._crash
+
+    def error(self, key, message, shown, guide=None):
+        """Error window with "Report a bug". ``key`` is a stable id, ``message``
+        the fixed English text of the error - both become the public title,
+        so they never carry names or paths. ``shown`` is what the user reads."""
+        ErrorDialog(self, key, message, shown, guide)
+
+    def _crash(self, exc, val, tb):
+        import traceback
+        frames = traceback.extract_tb(tb)
+        mine = [f for f in frames if os.path.dirname(os.path.abspath(f.filename)) in (HERE, getattr(sys, '_MEIPASS', HERE))]
+        where = mine[-1] if mine else (frames[-1] if frames else None)
+        spot = f'{os.path.basename(where.filename)}:{where.lineno}' if where else '?'
+        shown = ''.join(traceback.format_exception(exc, val, tb))[-3000:]
+        try:
+            self.fb.log.add(f'crash {exc.__name__} at {spot}')
+            ErrorDialog(self, 'crash', f'{exc.__name__} at {spot}', shown, None,
+                        title='crash: ' + exc.__name__)
+        except Exception:
+            sys.__excepthook__(exc, val, tb)
+
+    def help_mark(self, parent, text, chapter):
+        return help_mark(parent, text, chapter, self)
 
     def _icon(self):
         base = getattr(sys, '_MEIPASS', HERE)
         ico = os.path.join(base, 'mod_manager.ico')
         if os.path.exists(ico):
             try:
-                self.root.iconbitmap(ico)
+                self.root.iconbitmap(default=ico)       # every window of the tool, not only the first
             except Exception:
                 pass
 
@@ -670,6 +738,16 @@ class App:
             return
         self._started = True
         updater.cleanup_old()
+        if not self.selftest:
+            self.root.after(1500, self._startup_cache)
+            self.root.after(2500, self.fb.start)
+        self.root.protocol('WM_DELETE_WINDOW', self._close)
+        try:                                   # a merge that was killed half way
+            for f in os.listdir(self.mods_dir or ''):
+                if f.lower().endswith('.mmtmp'):
+                    os.remove(os.path.join(self.mods_dir, f))
+        except OSError:
+            pass
         try:
             n = enable_drop(self.root, self.on_drop)
             self.set_hint(tr('Drop a .wd anywhere on this window to install it.'))
@@ -702,6 +780,46 @@ class App:
         for p in c.get('pending', []):
             self.root.after(300, lambda p=p: self.offer_install([p]))
 
+    def _selftest_merge(self):
+        """Frozen build probe: two made-up mods merged in a temp folder, the
+        game's files read, the SDK field table found, a cache planned."""
+        if not self.game_dir:
+            return 'nogame'
+        import tempfile
+        import zlib
+        import fieldnames
+        import levelcache
+        import merger
+        import modscan
+        tmp = tempfile.mkdtemp(prefix='mm_selftest_')
+        try:
+            retail = modscan.Retail(self.game_dir)
+            qtx = retail.get(modscan.QTX)
+            if not qtx:
+                return 'noqtx'
+            meta = {'flags': 1, 'res': None, 'id': None, 'guid': None}
+            mods = []
+            end = bytes([10]) + b'END' + bytes([10])
+            for n, extra in enumerate((b'QUEST Q_398 0 (null) (null) 0 True' + end,
+                                       b'QUEST Q_399 0 (null) (null) 0 True' + end)):
+                data = qtx + extra
+                path = os.path.join(tmp, f'm{n}.wd')
+                merger.write_wd(path, [(dict(meta, path=SEP.join(('Scripts', 'Quests', 'TwoWorldsQuests.qtx')), rlen=len(data)),
+                                        zlib.compress(data))])
+                mods.append(path)
+            m = merger.Merge(mods, retail)
+            out = os.path.join(tmp, 'out.wd')
+            m.build(out)
+            units = modscan.qtx_units(modscan.archive(out).get(modscan.QTX).decode('latin-1'))[1]
+            ok = 'QUEST Q_398' in units and 'QUEST Q_399' in units and m.level == 'green'
+            names = fieldnames.field_name('MO_WOLF_01', 6)
+            maps = levelcache.plan(self.game_dir, [])[1]['maps']
+            return f"{'ok' if ok else 'WRONG'}/field6={names}/maps={maps}"
+        except Exception as e:
+            return f'failed:{type(e).__name__}:{e}'
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def _run_selftest(self, note=''):
         try:
             https = 'ok'
@@ -711,8 +829,10 @@ class App:
                 import urllib.request  # noqa: F401
             except ImportError as e:
                 https = f'missing:{e.name}'
+            merge = self._selftest_merge()
             with open(self.selftest, 'w', encoding='utf-8') as f:
                 f.write(f'version={VERSION} game={bool(self.game_dir)} mods={len(self.tree.get_children()) if self.game_dir else 0} '
+                        f'merge={merge} '
                         f'drop={getattr(self, "_drop_ok", False)} chapters={len(guidebook.CHAPTERS)} https={https} '
                         f'frozen={getattr(sys, "frozen", False)} {note}'.strip() + chr(10))
         except Exception as e:
@@ -744,6 +864,9 @@ class App:
         self.notebook.add(self._tab_installed(self.notebook), text='  ' + tr('Installed mods') + '  ')
         self.notebook.add(self._tab_server(self.notebook), text='  ' + tr('My Mods (server)') + '  ')
         self.notebook.add(self._tab_github(self.notebook), text='  ' + tr('Community (GitHub)') + '  ')
+        import mergeui
+        self.merge_tab = mergeui.MergeTab(self, self.notebook)
+        self.notebook.add(self.merge_tab.frame, text='  ' + tr('Merge mods') + '  ')
 
     def build_menubar(self):
         bar = ttk.Frame(self.root, style='Menubar.TFrame')
@@ -784,6 +907,11 @@ class App:
                       state='normal' if self.mods_dir else 'disabled')
         m.add_command(label=tr('Refresh'), accelerator='F5', command=self.refresh)
         m.add_separator()
+        m.add_command(label=tr('Rebuild level cache now'), command=lambda: self.sync_level_cache(manual=True),
+                      state='normal' if self.mods_dir else 'disabled')
+        m.add_checkbutton(label=tr('Keep level cache in step with the mods'), variable=self.cache_var,
+                          command=self._toggle_auto_cache)
+        m.add_separator()
         m.add_command(label=tr('Change game path...'), command=self.change_game_path)
         m.add_separator()
         m.add_command(label=tr('Exit'), accelerator='Alt+F4', command=self.root.destroy)
@@ -792,6 +920,7 @@ class App:
         m.add_command(label=tr('Installed mods'), command=lambda: self.notebook.select(0))
         m.add_command(label=tr('My Mods (server)'), command=lambda: self.notebook.select(1))
         m.add_command(label=tr('Community (GitHub)'), command=lambda: self.notebook.select(2))
+        m.add_command(label=tr('Merge mods'), command=lambda: self.notebook.select(3))
         m.add_separator()
         sub = theme.Menu(m)
         for code, name in (('de', 'Deutsch'), ('en', 'English')):
@@ -803,6 +932,8 @@ class App:
         m.add_command(label=tr('Guide'), accelerator='F1', command=self.show_guide)
         m.add_command(label=tr('Start tour'), command=self.guide.start)
         m.add_command(label=tr('Documentation'), command=lambda: webbrowser.open(GUIDE_URL))
+        m.add_separator()
+        self.fb.add_menu_items(m)
         m.add_separator()
         for name, url in LINKS:
             m.add_command(label=f'{name}  ({url})', command=lambda u=url: webbrowser.open(u))
@@ -820,7 +951,7 @@ class App:
         hdr.pack(fill='x', pady=(0, 4))
         ttk.Label(hdr, text=tr('Archives in the Mods folder'), style='Muted.TLabel').pack(side='left')
         help_mark(hdr, tr('One row per .wd with its registry switch. Double-click toggles. Red rows sit in the game folder and always load.'), 'switch', self)
-        self.tree = ttk.Treeview(tab, columns=('state', 'size', 'date'), show='tree headings')
+        self.tree = ttk.Treeview(tab, columns=('state', 'size', 'date', 'fit'), show='tree headings')
         self.tree.heading('#0', text=tr('Mod archive'))
         self.tree.heading('state', text=tr('State'))
         self.tree.heading('size', text=tr('Size'))
@@ -829,7 +960,14 @@ class App:
         self.tree.column('state', width=120, anchor='center')
         self.tree.column('size', width=90, anchor='e')
         self.tree.column('date', width=130, anchor='center')
+        self.tree.heading('fit', text=tr('With the selected mod'))
+        self.tree.column('fit', width=170, anchor='center')
         self.tree.pack(fill='both', expand=True)
+        import mergeui
+        mergeui.configure_tags(self.tree)
+        mergeui.RowTips(self.tree, self._row_tip)
+        self.tree.bind('<<TreeviewSelect>>', lambda ev: self._colour_fit(), add='+')
+        self.insight.on_ready(self._colour_fit)
         self.tree.tag_configure('on', foreground=theme.OK)
         self.tree.tag_configure('off', foreground=theme.MUT)
         self.tree.tag_configure('warn', foreground=theme.ERR)
@@ -949,14 +1087,24 @@ class App:
         self.show_guide(chapter)
 
     # ---- language ----
+    def _close(self):
+        if self.merging and not messagebox.askyesno(APP_NAME, tr('A merge is running. Close anyway? The unfinished file is removed at the next start.'), parent=self.root):
+            return
+        self.insight.stop()
+        self.root.destroy()
+
     def set_lang(self, code):
         global _LANG
         if code == _LANG:
+            return
+        if self.merging:
+            self.status(tr('Wait until the merge is done.'), error=True)
             return
         self.cfg['lang'] = code
         self.cfg.save()
         _LANG = code
         self.restart = True
+        self.insight.stop()
         self.carry_out = {'tab': self.notebook.index(self.notebook.select()), 'geometry': self.root.geometry()}
         self.root.destroy()
 
@@ -989,7 +1137,7 @@ class App:
         for name in sorted(files | set(reg), key=str.lower):
             path = os.path.join(self.mods_dir, name)
             exists = name in files
-            enabled = reg.get(name, 0)
+            enabled = reg.get(name, 1)      # no switch in the registry = the game loads it
             if not exists:
                 state, tag, size, date = tr('file missing'), 'off', '—', '—'
             else:
@@ -998,14 +1146,60 @@ class App:
                 import datetime
                 date = datetime.datetime.fromtimestamp(st.st_mtime).strftime('%d.%m.%Y %H:%M')
                 state, tag = (tr('enabled'), 'on') if enabled else (tr('disabled'), 'off')
-            self.tree.insert('', 'end', iid=name, text=name, values=(state, size, date), tags=(tag,))
+            self.tree.insert('', 'end', iid=name, text=name, values=(state, size, date, ''), tags=(tag,))
         for name in [f for f in os.listdir(self.game_dir) if f.lower().endswith('.wd')]:
             self.tree.insert('', 'end', iid='ROOT::' + name, text=name + '  ' + tr('(in the game folder!)'),
-                             values=(tr('ALWAYS loads'), '', ''), tags=('warn',))
+                             values=(tr('ALWAYS loads'), '', '', ''), tags=('warn',))
+        self._row_tags = {iid: self.tree.item(iid, 'tags') for iid in self.tree.get_children()}
+        self.insight.ensure([self._row_path(i) for i in self.tree.get_children()])
+        if hasattr(self, 'merge_tab'):
+            self.merge_tab.refresh()
         self._refresh_server_states()
         self._refresh_github_states()
-        on = sum(1 for n in files if reg.get(n, 0))
+        on = sum(1 for n in files if reg.get(n, 1))
         self.status(tr('{n} archives, {m} enabled').format(n=len(files), m=on))
+
+    def _row_path(self, iid):
+        if iid.startswith('ROOT::'):
+            return os.path.join(self.game_dir, iid[6:])
+        return os.path.join(self.mods_dir, iid)
+
+    def _row_tip(self, iid):
+        """Hover text: what the mod changes, and how it fits the selected one."""
+        import modscan
+        path = self._row_path(iid)
+        if not os.path.isfile(path):
+            return ''
+        info = self.insight.info(path)
+        if info is None:
+            return tr('reading...')
+        lines = list(modscan.summary_lines(info, tr=tr))
+        sel = self._selected()
+        if sel and sel != iid:
+            c = self.insight.compare(path, self._row_path(sel))
+            if c:
+                lines += ['', tr('With {name}:').format(name=sel.replace('ROOT::', ''))] + modscan.compare_lines(c, tr)
+        return chr(10).join(lines)
+
+    def _colour_fit(self):
+        """Rows take the colour of how they fit the selected mod: green no
+        overlap inside files, yellow overlaps, red clashes."""
+        import mergeui
+        sel = self._selected()
+        for iid in self.tree.get_children():
+            base = getattr(self, '_row_tags', {}).get(iid, ())
+            if not sel or iid == sel or not os.path.isfile(self._row_path(sel)):
+                self.tree.item(iid, tags=base)
+                self.tree.set(iid, 'fit', '')
+                continue
+            c = self.insight.compare(self._row_path(iid), self._row_path(sel)) \
+                if os.path.isfile(self._row_path(iid)) else None
+            if c is None:
+                self.tree.item(iid, tags=base)
+                self.tree.set(iid, 'fit', '')
+                continue
+            self.tree.item(iid, tags=(mergeui.LEVEL_TAG[c['level']],))
+            self.tree.set(iid, 'fit', mergeui.fit_text(tr, c['level'], None))
 
     def _selected(self):
         sel = self.tree.selection()
@@ -1040,12 +1234,12 @@ class App:
         if game_running():
             messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
             return
-        new = 0 if registry_mods().get(name, 0) else 1
+        new = 0 if registry_mods().get(name, 1) else 1
         registry_set(name, new)
         self.refresh()
         self.tree.selection_set(name)
         self.status(tr('{name} {state} - takes effect on the next game start.').format(
-            name=name, state=tr('enabled') if new else tr('disabled')))
+            name=name, state=tr('enabled') if new else tr('disabled')) + '  ' + self.sync_level_cache(checked=True))
 
     def add_mod(self):
         paths = filedialog.askopenfilenames(parent=self.root, title=tr('Choose a mod archive'),
@@ -1086,14 +1280,16 @@ class App:
             registry_set(name, 1 if enable else 0)
         except OSError as e:
             self.status(tr('Install failed: {e}').format(e=e), error=True)
+            self.fb.log.add('install failed')
+            self.error('install.failed', 'Installing a mod archive failed', tr('Install failed: {e}').format(e=e), 'install')
             return
         self.refresh()
         if self.tree.exists(name):
             self.tree.selection_set(name)
             self.tree.see(name)
         self.notebook.select(0)
-        self.status(tr('{name} installed and enabled.').format(name=name) if enable
-                    else tr('{name} installed, switch off.').format(name=name))
+        self.status((tr('{name} installed and enabled.').format(name=name) if enable
+                     else tr('{name} installed, switch off.').format(name=name)) + '  ' + self.sync_level_cache())
 
     def remove_mod(self):
         name = self._selected()
@@ -1120,7 +1316,8 @@ class App:
         else:
             registry_delete(name)          # "file missing" row: drop the stale switch
         self.refresh()
-        self.status(tr('{name} moved to Mods\\_removed and disabled - nothing was deleted.').format(name=name))
+        self.status(tr('{name} moved to Mods\\_removed and disabled - nothing was deleted.').format(name=name)
+                    + '  ' + self.sync_level_cache())
 
     # ---- server ----
     def _fetch_catalog(self):
@@ -1291,6 +1488,74 @@ class App:
         threading.Thread(target=work, daemon=True).start()
 
     # ---- updates ----
+    def _toggle_auto_cache(self):
+        self.cfg['auto_level_cache'] = bool(self.cache_var.get())
+        self.cfg.save()
+        if self.cache_var.get():
+            self.sync_level_cache()
+
+    def loaded_archives(self):
+        """Archives the game will load: Mods\\*.wd unless their registry
+        switch is 0 (no value = loaded), plus every .wd in the game folder."""
+        reg = {k.lower(): v for k, v in registry_mods().items()}      # Windows names: case does not matter
+        out = []
+        if self.mods_dir and os.path.isdir(self.mods_dir):
+            out += [os.path.join(self.mods_dir, f) for f in os.listdir(self.mods_dir)
+                    if f.lower().endswith('.wd') and reg.get(f.lower(), 1)]
+        if self.game_dir and os.path.isdir(self.game_dir):
+            out += [os.path.join(self.game_dir, f) for f in os.listdir(self.game_dir)
+                    if f.lower().endswith('.wd')]
+        return out
+
+    def _startup_cache(self):
+        """The mod list may have changed outside the tool (in-game Mod Selector)."""
+        try:
+            note = self.sync_level_cache()
+            if note:
+                self.status(note)
+        except tk.TclError:
+            pass
+
+    def sync_level_cache(self, manual=False, checked=False):
+        """Rebuild <game>\\Levels\\Map_LevelHeaders.lhc for the archives the
+        game will load (levelcache.py - what the SDK's LevelHeadersCacheGen.bat
+        does, without the SDK). Returns the note for the status bar."""
+        if not self.game_dir or not (manual or self.cfg.get('auto_level_cache', True)):
+            return ''
+        if not checked and game_running():
+            if manual:
+                messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            return tr('Level cache not rebuilt while the game runs.')
+        try:
+            import levelcache
+            mods = self.loaded_archives()
+            if not manual and not os.path.isfile(levelcache.target(self.game_dir)):
+                # no loose cache yet: only make one when a loaded mod brings maps
+                _blob, rep = levelcache.plan(self.game_dir, mods)
+                if not rep['mod_maps']:
+                    return ''
+            changed, rep = levelcache.sync(self.game_dir, mods, os.path.join(data_dir(), 'backup'))
+        except Exception as e:
+            note = tr('Level cache not rebuilt: {e}').format(e=e)
+            if manual:
+                self.status(note, error=True)
+            return note
+        n = sum(len(v) for v in rep['mod_maps'].values())
+        if rep.get('unreadable'):
+            self._cache_unreadable = rep['unreadable']
+        note = (tr('Level cache rebuilt ({maps} maps, {n} from mods).') if changed
+                else tr('Level cache is up to date ({maps} maps, {n} from mods).')).format(maps=rep['maps'], n=n)
+        if rep.get('broken'):
+            note += ' ' + tr('Not readable, left out: {names}.').format(names=', '.join(rep['broken'][:3]))
+        if rep.get('unreadable'):
+            note += ' ' + tr('{k} map(s) of mods could not be read - the game keeps its own markers there.').format(
+                k=len(rep['unreadable']))
+        if rep['clashes']:
+            note += ' ' + tr('{k} map(s) come from two mods - which one the game takes is not measured.').format(k=len(rep['clashes']))
+        if manual:
+            self.status(note)
+        return note if (changed or manual or rep.get('broken')) else ''
+
     def _toggle_update_check(self):
         self.cfg['update_check'] = bool(self.update_var.get())
         self.cfg.save()
@@ -1344,6 +1609,38 @@ class App:
     def run(self):
         self._bind_keys()
         self.root.mainloop()
+
+
+class ErrorDialog:
+    """An error the user can report: message, OK, "Report a bug", optional guide."""
+
+    def __init__(self, app, key, message, shown, guide=None, title=None):
+        self.win = win = tk.Toplevel(app.root)
+        win.title(tr('Error'))
+        win.transient(app.root)
+        theme.dark_titlebar(win)
+        win.bind('<Escape>', lambda e: win.destroy())
+        f = ttk.Frame(win, padding=16)
+        f.pack(fill='both', expand=True)
+        box = tk.Text(f, wrap='word', height=min(14, max(3, shown.count(chr(10)) + 2 + len(shown) // 90)),
+                      width=86, bg=theme.FIELD, fg=theme.INK, relief='flat', font=theme.FONT_MONO,
+                      highlightthickness=0, padx=8, pady=6)
+        box.insert('1.0', shown)
+        box.configure(state='disabled')
+        box.pack(fill='both', expand=True)
+        btns = ttk.Frame(f)
+        btns.pack(fill='x', pady=(12, 0))
+        ttk.Button(btns, text='OK', style='Accent.TButton', command=win.destroy).pack(side='right')
+        ttk.Button(btns, text=tr('Report a bug...'),
+                   command=lambda: app.fb.report_bug(parent=win, error_text=shown, error_key=key,
+                                                     title=title or f'{key}: {message}', fp_text=message)
+                   ).pack(side='right', padx=6)
+        if guide:
+            ttk.Button(btns, text=tr('Read in the guide'),
+                       command=lambda: app.show_guide(guide)).pack(side='left')
+        win.update_idletasks()
+        win.geometry(f'+{app.root.winfo_rootx() + 80}+{app.root.winfo_rooty() + 80}')
+        win.focus_set()
 
 
 class UpdateWindow:
@@ -1441,6 +1738,78 @@ class UpdateWindow:
 # --------------------------------------------------------------- Deutsch --
 
 DE = {
+    'Your mods are never changed; the result is a new archive.': 'Deine Mods werden nie veraendert; das Ergebnis ist ein neues Archiv.',
+    'Help testing it': 'Beim Testen helfen',
+    'Error': 'Fehler', 'Report a bug...': 'Bug melden...', 'Read in the guide': 'Im Guide nachlesen',
+    'Level cache not rebuilt while the game runs.': 'Level-Cache nicht neu gebaut, solange das Spiel laeuft.',
+    'Not readable, left out: {names}.': 'Nicht lesbar, ausgelassen: {names}.',
+    'Wait until the merge is done.': 'Warte, bis das Zusammenfuehren fertig ist.',
+    'A merge is running. Close anyway? The unfinished file is removed at the next start.':
+        'Ein Zusammenfuehren laeuft. Trotzdem schliessen? Die unfertige Datei wird beim naechsten Start entfernt.',
+    '{k} map(s) of mods could not be read - the game keeps its own markers there.':
+        '{k} Karte(n) aus Mods nicht lesbar - dort behaelt das Spiel seine eigenen Marker.',
+    'The game itself:': 'Das Spiel selbst:',
+    'par: {a} fields changed, {b} entries new or rebuilt': 'Par: {a} Felder geaendert, {b} Eintraege neu oder umgebaut',
+    'quest file: ': 'Questdatei: ', 'texts: {a} keys, {b} dialog trees': 'Texte: {a} Schluessel, {b} Dialogbaeume',
+    'maps: ': 'Karten: ', "{n} file(s) identical to the game's": '{n} Datei(en) identisch mit dem Spiel',
+    'not analysed': 'nicht untersucht', 'par: {n} fields changed by both': 'Par: {n} Felder von beiden geaendert',
+    'quest file: {n} blocks changed by both': 'Questdatei: {n} Bloecke von beiden geaendert',
+    'texts: {a} keys, {b} dialog trees changed by both': 'Texte: {a} Schluessel, {b} Dialogbaeume von beiden geaendert',
+    'maps in both: ': 'Karten in beiden: ', '{n} other file(s) in both: ': '{n} weitere Datei(en) in beiden: ',
+    'compiled scripts in both (cannot be merged): ': 'kompilierte Skripte in beiden (nicht teilbar): ',
+    'quests': 'Quests', 'texts': 'Texte', 'par': 'Par', 'scripts': 'Skripte', 'maps': 'Karten', 'physics': 'Physik',
+    'level cache': 'Level-Cache', 'meshes': 'Modelle', 'textures': 'Texturen', 'materials': 'Materialien',
+    'sounds': 'Klaenge', 'images': 'Bilder', 'console': 'Konsole', 'animations': 'Animationen',
+    'text files': 'Textdateien', 'characters': 'Charaktere', 'archives': 'Archive', 'minimap': 'Minimap',
+    'Merge mods': 'Mods zusammenfuehren', 'With the selected mod': 'Mit der gewaehlten Mod',
+    'With {name}:': 'Mit {name}:', 'reading...': 'lese...', 'fits': 'passt', 'overlaps': 'ueberschneidet sich',
+    'clashes': 'kollidiert', 'no overlap inside files': 'keine Ueberschneidung innerhalb von Dateien',
+    'Merge mods into one new mod': 'Mods zu einer neuen Mod zusammenfuehren',
+    'Tick the mods to merge. Green: no overlap inside files. Yellow: a few overlaps or shared maps, each one is asked. Red: too many overlaps or compiled scripts - one mod has to be the main mod and wins every clash. The source mods are only read.':
+        'Die Mods anhaken, die zusammen sollen. Gruen: keine Ueberschneidung innerhalb von Dateien. Gelb: wenige Ueberschneidungen oder gemeinsame Karten, jede wird gefragt. Rot: zu viele Ueberschneidungen oder kompilierte Skripte - eine Mod muss Haupt-Mod sein und gewinnt jede Kollision. Die Quell-Mods werden nur gelesen.',
+    'EXPERIMENTAL - the merged mod may be buggy or keep the game from starting. Your mods are never changed; the result is a new archive.':
+        'EXPERIMENTELL - die zusammengefuehrte Mod kann verbugt sein oder das Spiel am Starten hindern. Deine Mods werden nie veraendert; das Ergebnis ist ein neues Archiv.',
+    'Changes': 'Aendert', 'With the ticked mods': 'Mit den angehakten Mods',
+    'Name of the new mod:': 'Name der neuen Mod:', 'Main mod:': 'Haupt-Mod:',
+    'The main mod is the base: its files stay as they are and it wins every clash you do not decide yourself. Needed for red combinations.':
+        'Die Haupt-Mod ist die Grundlage: ihre Dateien bleiben wie sie sind, und sie gewinnt jede Kollision, die du nicht selbst entscheidest. Bei roten Kombinationen noetig.',
+    'Carry quest markers over to the chosen map and put lost game markers back':
+        'Questmarker auf die gewaehlte Karte uebertragen und verlorene Spielmarker zuruecksetzen',
+    'Merge...': 'Zusammenfuehren...', 'Add archive from elsewhere...': 'Archiv von woanders hinzufuegen...',
+    'Untick all': 'Alle Haken entfernen', '(from elsewhere)': '(von woanders)',
+    'Tick at least two mods.': 'Mindestens zwei Mods anhaken.',
+    'Green: no overlap inside files - merges without a question.': 'Gruen: keine Ueberschneidung innerhalb von Dateien - laeuft ohne Rueckfrage.',
+    'Yellow (experimental): overlaps are asked one by one.': 'Gelb (experimentell): Ueberschneidungen werden einzeln gefragt.',
+    'Red (experimental): choose a main mod - it wins every clash.': 'Rot (experimentell): Haupt-Mod waehlen - sie gewinnt jede Kollision.',
+    'Still reading the archives...': 'Archive werden noch gelesen...',
+    '{name} exists already - choose another name. The merger never overwrites a mod.':
+        '{name} gibt es schon - anderen Namen waehlen. Das Zusammenfuehren ueberschreibt nie eine Mod.',
+    'Could not read the mods: {e}': 'Mods nicht lesbar: {e}',
+    'Red combination ({n} overlaps). Choose a main mod first: it wins every clash, the other mods add what does not clash.':
+        'Rote Kombination ({n} Ueberschneidungen). Erst eine Haupt-Mod waehlen: sie gewinnt jede Kollision, die anderen Mods steuern bei, was nicht kollidiert.',
+    'Merge {n} mods into {name}?\n\nThis is experimental: the result may be buggy or keep the game from starting. Your mods stay untouched.':
+        '{n} Mods zu {name} zusammenfuehren?\n\nDas ist experimentell: das Ergebnis kann verbugt sein oder das Spiel am Starten hindern. Deine Mods bleiben unberuehrt.',
+    'RED: {k} clashes go to the main mod {main}.': 'ROT: {k} Kollisionen gehen an die Haupt-Mod {main}.',
+    '{a} of {b} files': '{a} von {b} Dateien', 'Merge failed: {e}': 'Zusammenfuehren fehlgeschlagen: {e}',
+    '{name} is in the Mods folder, switched off.\n\nEnable it now and switch the merged source mods off? (Both at once would load everything twice.)':
+        '{name} liegt im Mods-Ordner, ausgeschaltet.\n\nJetzt einschalten und die zusammengefuehrten Quell-Mods ausschalten? (Beides zugleich wuerde alles doppelt laden.)',
+    '{name} merged.': '{name} zusammengefuehrt.',
+    'Overlaps - who wins?': 'Ueberschneidungen - wer gewinnt?',
+    '{n} places are changed by more than one mod. Pick the winner per row, or give all to one mod.':
+        '{n} Stellen werden von mehr als einer Mod geaendert. Je Zeile den Gewinner waehlen, oder alles einer Mod geben.',
+    'Give all to:': 'Alles an:', 'Cancel': 'Abbrechen', 'Merge with these choices': 'Mit dieser Auswahl zusammenfuehren',
+    'Place': 'Stelle', 'Winner': 'Gewinner', 'Parameters': 'Parameter', 'Quest file': 'Questdatei', 'Texts': 'Texte',
+    'Dialog trees': 'Dialogbaeume', 'Maps': 'Karten', 'Whole files': 'Ganze Dateien', 'Compiled scripts': 'Kompilierte Skripte',
+    'Map and physics always come from the same mod. Markers only the other mod has are carried over.':
+        'Karte und Physik kommen immer aus derselben Mod. Marker, die nur die andere Mod hat, werden uebertragen.',
+    'Merge report': 'Bericht', 'Close': 'Schliessen',
+    'Rebuild level cache now': 'Level-Cache jetzt neu bauen',
+    'Keep level cache in step with the mods': 'Level-Cache mit den Mods mitfuehren',
+    'Level cache not rebuilt: {e}': 'Level-Cache nicht neu gebaut: {e}',
+    'Level cache rebuilt ({maps} maps, {n} from mods).': 'Level-Cache neu gebaut ({maps} Karten, {n} aus Mods).',
+    'Level cache is up to date ({maps} maps, {n} from mods).': 'Level-Cache ist aktuell ({maps} Karten, {n} aus Mods).',
+    '{k} map(s) come from two mods - which one the game takes is not measured.':
+        '{k} Karte(n) kommen aus zwei Mods - welche das Spiel nimmt, ist nicht vermessen.',
     'File': 'Datei', 'View': 'Ansicht', 'Help': 'Hilfe', 'Add external mod...': 'Mod-Datei einlegen...',
     'Open Mods folder': 'Mods-Ordner oeffnen', 'Refresh': 'Neu lesen', 'Change game path...': 'Spielordner aendern...',
     'Exit': 'Beenden', 'Installed mods': 'Eingelegte Mods', 'My Mods (server)': 'Mods vom Server', 'Language': 'Sprache',

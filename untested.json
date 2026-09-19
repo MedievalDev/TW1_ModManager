@@ -1,0 +1,171 @@
+{
+ "format": 1,
+ "tests": [
+  {
+   "id": "merge-yellow-ingame",
+   "since": "2.2.0",
+   "needs_run": true,
+   "experimental": "merge",
+   "title": {
+    "de": "Zwei Mods zusammenfuehren und im Spiel pruefen",
+    "en": "Merge two mods and check them in the game"
+   },
+   "why": {
+    "de": "Die zusammengefuehrte Mod ist Byte fuer Byte geprueft: jeder Wert stammt von der Mod, die gewinnen sollte. Ob das Spiel damit startet und beide Mods wirken, hat noch niemand im Spiel gesehen.",
+    "en": "The merged mod is checked byte for byte: every value comes from the mod that was supposed to win. Whether the game starts with it and both mods take effect has not been seen in the game yet."
+   },
+   "steps": {
+    "de": [
+     "Reiter \"Mods zusammenfuehren\" oeffnen und zwei Mods anhaken, deren Zeile gruen oder gelb wird (zum Beispiel eine Balance-Mod und eine Quest-Mod).",
+     "Einen Namen eintragen, auf \"Zusammenfuehren...\" klicken. Bei Gelb im Fenster je Zeile einen Gewinner waehlen oder oben alles einer Mod geben.",
+     "Die Frage \"Jetzt einschalten und die Quell-Mods ausschalten?\" mit Ja beantworten.",
+     "Hier unten auf \"Starten\" klicken und ein NEUES Spiel beginnen (Quests und Werte stecken in alten Spielstaenden).",
+     "Pruefen: Eine Aenderung aus der ersten Mod ist da (zum Beispiel ein geaenderter Gegner oder Gegenstand), und eine aus der zweiten auch.",
+     "Spiel beenden und hier das Ergebnis waehlen."
+    ],
+    "en": [
+     "Open the \"Merge mods\" tab and tick two mods whose row turns green or yellow (for example a balance mod and a quest mod).",
+     "Type a name, click \"Merge...\". For yellow pick a winner per row in the window, or give everything to one mod at the top.",
+     "Answer \"Enable it now and switch the source mods off?\" with Yes.",
+     "Click \"Start\" below and begin a NEW game (quests and values live in old savegames).",
+     "Check: one change of the first mod is there (for example a changed enemy or item), and one of the second as well.",
+     "Quit the game and pick the result here."
+    ]
+   },
+   "expect": {
+    "de": "Das Spiel startet ohne Absturz bis ins Hauptmenue und in ein neues Spiel. Aenderungen BEIDER Mods sind im Spiel zu sehen.",
+    "en": "The game starts without a crash into the main menu and into a new game. Changes of BOTH mods can be seen in the game."
+   }
+  },
+  {
+   "id": "merge-maps-ingame",
+   "since": "2.2.0",
+   "needs_run": true,
+   "experimental": "merge-maps",
+   "title": {
+    "de": "Zwei Karten-Mods zusammenfuehren: Karte und Questmarker",
+    "en": "Merge two map mods: map and quest markers"
+   },
+   "why": {
+    "de": "Bringen zwei Mods dieselbe Kachel, kommen Karte und Physik aus einer Mod, die Questmarker der anderen werden uebertragen und auf den Boden der gewaehlten Karte gesetzt. Geprueft ist das an den Dateien, nicht im Spiel.",
+    "en": "When two mods bring the same tile, map and physics come from one mod, the quest markers of the other are carried over and set onto the ground of the chosen map. That is checked on the files, not in the game."
+   },
+   "steps": {
+    "de": [
+     "Zwei Mods anhaken, die dieselbe Kachel mitbringen (der Tooltip der Zeile nennt unter \"Karten\" die Kacheln; die Spalte zeigt \"ueberschneidet sich\").",
+     "Zusammenfuehren und im Fenster je Karte die Mod waehlen. Den Bericht am Ende lesen: er nennt jeden uebertragenen Marker.",
+     "Die neue Mod einschalten, die Quell-Mods ausschalten lassen.",
+     "\"Starten\" klicken, neues Spiel, zu einer der genannten Kacheln reisen.",
+     "Pruefen: Boden und Gebaeude sehen aus wie in der gewaehlten Mod, man faellt nirgends durch. Eine Quest der ANDEREN Mod auf dieser Kachel laesst sich annehmen (ihr NPC oder Gegenstand steht auf dem Boden, nicht in der Luft oder im Gelaende).",
+     "Spiel beenden und hier das Ergebnis waehlen."
+    ],
+    "en": [
+     "Tick two mods that bring the same tile (the tooltip of the row names the tiles under \"maps\"; the column says \"overlaps\").",
+     "Merge and pick the mod per map in the window. Read the report at the end: it names every marker carried over.",
+     "Enable the new mod and let the source mods be switched off.",
+     "Click \"Start\", new game, travel to one of the tiles named.",
+     "Check: ground and buildings look like in the chosen mod, you do not fall through anywhere. A quest of the OTHER mod on that tile can be taken (its NPC or object stands on the ground, not in the air or inside the terrain).",
+     "Quit the game and pick the result here."
+    ]
+   },
+   "expect": {
+    "de": "Die Kachel laedt mit dem Gelaende der gewaehlten Mod, keine bunten oder fehlenden Bodentexturen. Der Quest-NPC oder das Questobjekt der anderen Mod steht begehbar auf dem Boden.",
+    "en": "The tile loads with the terrain of the chosen mod, no coloured or missing ground textures. The quest NPC or quest object of the other mod stands on the ground where you can reach it."
+   }
+  },
+  {
+   "id": "level-cache-auto-ingame",
+   "since": "2.2.0",
+   "needs_run": true,
+   "experimental": "level-cache",
+   "title": {
+    "de": "Level-Cache laeuft automatisch mit",
+    "en": "Level cache follows the mods on its own"
+   },
+   "why": {
+    "de": "Der Manager baut Levels\\Map_LevelHeaders.lhc nach jedem Ein- und Ausschalten neu, ohne das SDK. Die Datei ist Byte fuer Byte gleich der des SDK-Werkzeugs. Im Spiel geprueft hat das noch niemand.",
+    "en": "The manager rebuilds Levels\\Map_LevelHeaders.lhc after every enable and disable, without the SDK. The file is byte for byte the one the SDK tool writes. Nobody has checked it in the game yet."
+   },
+   "steps": {
+    "de": [
+     "Eine Mod mit Karten einschalten (Tooltip der Zeile zeigt \"Karten\"). Die Statuszeile unten meldet \"Level-Cache neu gebaut\".",
+     "\"Starten\" klicken, neues Spiel oder Spielstand, zu einer Kachel dieser Mod gehen und eine ihrer Quests annehmen oder einen ihrer neuen NPCs suchen.",
+     "Spiel beenden. Die Mod wieder ausschalten (Statuszeile meldet den Cache erneut).",
+     "Noch einmal \"Starten\" und dieselbe Gegend ansehen.",
+     "Spiel beenden und hier das Ergebnis waehlen."
+    ],
+    "en": [
+     "Enable a mod with maps (the tooltip of the row shows \"maps\"). The status bar says \"Level cache rebuilt\".",
+     "Click \"Start\", new game or savegame, go to a tile of that mod and take one of its quests or look for one of its new NPCs.",
+     "Quit the game. Disable the mod again (the status bar reports the cache again).",
+     "Click \"Start\" once more and look at the same area.",
+     "Quit the game and pick the result here."
+    ]
+   },
+   "expect": {
+    "de": "Mit der Mod: ihre NPCs und Questobjekte sind da. Ohne die Mod: die Gegend sieht aus wie im Originalspiel, keine bunten oder kaputten Bodentexturen.",
+    "en": "With the mod: its NPCs and quest objects are there. Without the mod: the area looks like the original game, no coloured or broken ground textures."
+   }
+  },
+  {
+   "id": "fit-colours-plausible",
+   "since": "2.2.0",
+   "needs_run": false,
+   "title": {
+    "de": "Tooltip und Farben stimmen fuer deine Mods",
+    "en": "Tooltip and colours are right for your mods"
+   },
+   "why": {
+    "de": "Geprueft ist das an sieben Mods. Bei anderen Mods kann eine Datei unerwartet aufgebaut sein.",
+    "en": "This is checked on seven mods. Other mods may have files built in an unexpected way."
+   },
+   "steps": {
+    "de": [
+     "Im Reiter \"Eingelegte Mods\" die Maus eine halbe Sekunde auf einer Mod stehen lassen, deren Inhalt du kennst.",
+     "Pruefen: Der Tooltip nennt die Dateiarten richtig (zum Beispiel Par, Quests, Karten) und meldet keinen Fehler.",
+     "Eine Mod anklicken. Die anderen Zeilen werden gruen, gelb oder rot.",
+     "Pruefen: Zwei Mods, von denen du weisst, dass sie dieselbe Sache aendern, sind gelb oder rot. Zwei, die nichts miteinander zu tun haben, sind gruen."
+    ],
+    "en": [
+     "In the \"Installed mods\" tab rest the mouse for half a second on a mod whose content you know.",
+     "Check: the tooltip names the kinds of files correctly (for example par, quests, maps) and reports no error.",
+     "Click a mod. The other rows turn green, yellow or red.",
+     "Check: two mods you know to change the same thing are yellow or red. Two that have nothing to do with each other are green."
+    ]
+   },
+   "expect": {
+    "de": "Der Tooltip passt zum Inhalt der Mod, keine Zeile zeigt eine Fehlermeldung, und die Farben entsprechen dem, was du ueber die Mods weisst.",
+    "en": "The tooltip fits the content of the mod, no row shows an error message, and the colours match what you know about the mods."
+   }
+  },
+  {
+   "id": "drop-with-the-mouse",
+   "since": "2.2.0",
+   "needs_run": false,
+   "title": {
+    "de": "Eine .wd mit der Maus aufs Fenster ziehen",
+    "en": "Drag a .wd onto the window with the mouse"
+   },
+   "why": {
+    "de": "Das Ablegen ist mit einer nachgestellten Windows-Nachricht geprueft, nicht mit einer echten Mausbewegung aus dem Explorer.",
+    "en": "Dropping is checked with a simulated Windows message, not with a real mouse drag from Explorer."
+   },
+   "steps": {
+    "de": [
+     "Den Explorer oeffnen und eine .wd-Datei suchen (zum Beispiel aus einem Download).",
+     "Die Datei mit der Maus irgendwo auf das Fenster des Mod Managers ziehen und loslassen.",
+     "Pruefen: Ein Fenster zeigt Name, Groesse und Inhalt der Datei und fragt nach Einlegen."
+    ],
+    "en": [
+     "Open Explorer and find a .wd file (for example from a download).",
+     "Drag the file with the mouse anywhere onto the Mod Manager window and let go.",
+     "Check: a window shows name, size and content of the file and asks whether to install."
+    ]
+   },
+   "expect": {
+    "de": "Das Einlege-Fenster erscheint sofort nach dem Loslassen, das Tool stuerzt nicht ab.",
+    "en": "The install window appears right after letting go, the tool does not crash."
+   }
+  }
+ ]
+}

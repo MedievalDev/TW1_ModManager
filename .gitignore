@@ -3,3 +3,7 @@ dist/
 build/
 *.spec
 mod_manager_settings.json
+scan/
+merges/
+backup/
+*.mmtmp

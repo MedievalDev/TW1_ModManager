@@ -294,6 +294,131 @@ def ch_reference():
     return out
 
 
+def ch_merge():
+    import modscan
+    rows = [(_l('Gruen', 'green'), _l('keine Ueberschneidung innerhalb von Dateien', 'no overlap inside files'),
+             _l('laeuft ohne Rueckfrage', 'merges without a question')),
+            (_l('Gelb', 'yellow'), _l('bis %d Ueberschneidungen in Dateien, gemeinsame Karten oder ganze Dateien'
+                                      % modscan.SOFT_LIMIT,
+                                      'up to %d overlaps inside files, shared maps or whole files' % modscan.SOFT_LIMIT),
+             _l('jede wird gefragt', 'each one is asked')),
+            (_l('Rot', 'red'), _l('mehr als %d Ueberschneidungen, oder kompilierte Skripte (.eco) in beiden'
+                                  % modscan.SOFT_LIMIT,
+                                  'more than %d overlaps, or compiled scripts (.eco) in both' % modscan.SOFT_LIMIT),
+             _l('Haupt-Mod waehlen, sie gewinnt jede Kollision', 'choose a main mod, it wins every clash'))]
+    units = [('Parameters\\TwoWorlds.par', _l('je Feld eines Eintrags; neue Eintraege als Ganzes',
+                                              'per field of an entry; new entries as a whole')),
+             ('Scripts\\Quests\\TwoWorldsQuests.qtx', _l('je Block (QUEST, NPC, CONTAINER bis END) und je LOCATION-Zeile',
+                                                         'per block (QUEST, NPC, CONTAINER up to END) and per LOCATION line')),
+             ('Language\\*.lan', _l('je Textschluessel und je Dialogbaum', 'per text key and per dialog tree')),
+             ('Levels\\Map_X.lnd + physic\\Map_X.phx', _l('je Kachel, Karte und Physik immer aus derselben Mod',
+                                                          'per tile, map and physics always from the same mod')),
+             ('Levels\\Map_LevelHeaders.lhc', _l('wird nie uebernommen, sondern neu gebaut', 'never taken over, built new')),
+             (_l('alles andere', 'everything else'), _l('ganze Datei', 'whole file'))]
+    return _l('''# Mods zusammenfuehren (experimentell)
+
+Zwei Mods, die dieselbe Datei mitbringen, schliessen sich im Spiel aus: eine
+gewinnt, die andere Datei laedt nie. Der Reiter **Merge mods** baut aus
+mehreren Mods eine neue. Die Quell-Mods werden nur gelesen, nichts wird
+ueberschrieben.
+
+## Was eine Mod aendert
+
+Mit der Maus ueber einer Zeile stehen bleiben: welche Dateiarten die Mod
+mitbringt, wie viele Par-Felder, Quest-Bloecke, Texte und welche Karten sie
+gegenueber dem Spiel aendert. Im Reiter Installed mods faerbt ein Klick auf
+eine Mod die anderen Zeilen danach, wie sie zu ihr passen.
+
+## Farben
+
+''', '''# Merging mods (experimental)
+
+Two mods that ship the same file shut each other out in the game: one wins,
+the other file never loads. The **Merge mods** tab builds one new mod out of
+several. The source mods are only read, nothing is overwritten.
+
+## What a mod changes
+
+Rest the mouse on a row: which kinds of files the mod ships, how many par
+fields, quest blocks, texts and which maps it changes against the game. In
+the Installed mods tab a click on a mod colours the other rows by how they
+fit it.
+
+## Colours
+
+''') + _table([_l('Farbe', 'Colour'), _l('Bedeutung', 'Meaning'), _l('Beim Zusammenfuehren', 'When merging')], rows) \
+        + '\n\n' + _source('modscan.py, compare / SOFT_LIMIT') + _l('''
+## Wie fein zusammengefuehrt wird
+
+''', '''
+## How fine the merge goes
+
+''') + _table([_l('Datei', 'File'), _l('Einheit', 'Unit')], units) + '\n\n' + _source('modscan.py, merger.py') + _l('''
+"Geaendert" heisst: anders als die Datei des Spiels. Aendern zwei Mods
+dasselbe Feld auf denselben Wert, ist das keine Ueberschneidung.
+
+## Ablauf
+
+1. Mods anhaken. Die Reihenfolge der Haken ist die Reihenfolge der Mods.
+2. Namen der neuen Mod eintragen. Ein vorhandener Name wird abgelehnt.
+3. **Haupt-Mod** (bei Rot Pflicht): ihre Dateien bleiben Byte fuer Byte, wo
+   keine andere Mod etwas aendert, und sie gewinnt jede Kollision, die du
+   nicht selbst entscheidest.
+4. Bei Gelb oeffnet sich die Liste der Ueberschneidungen: links die Stelle,
+   rechts die Werte beider Mods. "Give all to" gibt den Rest einer Mod.
+5. Die neue Mod landet ausgeschaltet im Mods-Ordner. Der Manager bietet an,
+   sie einzuschalten und die Quell-Mods auszuschalten - beides zugleich
+   wuerde alles doppelt laden.
+
+## Karten
+
+Bringen zwei Mods dieselbe Kachel, waehlst du je Kachel die Mod. Marker, die
+nur die andere Mod auf ihrer Fassung hat (Questmarker!), werden auf die
+gewaehlte Karte uebertragen und auf deren Boden gesetzt; Marker des Spiels,
+die der gewaehlten Karte fehlen, kommen zurueck. Bei Innenraeumen ohne
+lesbare Hoehenkarte bleibt die Hoehe, wie sie war. Der Bericht nennt jeden
+uebertragenen Marker.
+
+## Grenzen
+
+Das Tool kann nicht pruefen, ob das Spiel mit dem Ergebnis startet. Zwei
+Balance-Mods lassen sich sauber zusammenfuehren und ergeben trotzdem Unsinn.
+Kompilierte Skripte (.eco) sind nicht teilbar. Der Bericht jeder
+Zusammenfuehrung liegt im Datenordner des Tools unter `merges`.
+''', '''
+"Changed" means: different from the game's own file. Two mods that set the
+same field to the same value do not overlap.
+
+## Steps
+
+1. Tick the mods. The order of the ticks is the order of the mods.
+2. Type the name of the new mod. An existing name is refused.
+3. **Main mod** (required for red): its files stay byte for byte where no
+   other mod changes anything, and it wins every clash you do not decide
+   yourself.
+4. For yellow the list of overlaps opens: the place on the left, the values
+   of both mods on the right. "Give all to" hands the rest to one mod.
+5. The new mod lands in the Mods folder, switched off. The manager offers to
+   enable it and switch the source mods off - both at once would load
+   everything twice.
+
+## Maps
+
+When two mods bring the same tile you choose the mod per tile. Markers only
+the other mod has on its version (quest markers!) are carried over onto the
+chosen map and set onto its ground; game markers the chosen map lacks come
+back. For interiors without a readable heightmap the height stays as it
+was. The report names every marker carried over.
+
+## Limits
+
+The tool cannot test whether the game starts with the result. Two balance
+mods merge cleanly and can still be nonsense in play. Compiled scripts
+(.eco) cannot be split. The report of every merge is kept in the tool's
+data folder under `merges`.
+''')
+
+
 def ch_trouble():
     return _l('''# Fehlersuche
 
@@ -364,6 +489,7 @@ CHAPTERS = (
     ('install', ('Mod einlegen', 'Installing a mod'), ch_install),
     ('switch', ('Ein- und ausschalten', 'Enabling and disabling'), ch_switch),
     ('server', ('Mods vom Server und von GitHub', 'Mods from the server and GitHub'), ch_server),
+    ('merge', ('Mods zusammenfuehren', 'Merging mods'), ch_merge),
     ('reference', ('Referenztabellen', 'Reference tables'), ch_reference),
     ('trouble', ('Fehlersuche', 'Troubleshooting'), ch_trouble),
 )

@@ -52,6 +52,12 @@ blocked by Windows — run the tool without administrator rights.
 |---|---|
 | `mod_manager.py` | the tool (`--` a `.wd` path as argument opens the install dialog) |
 | `guidebook.py` | guide window (F1), chapters DE/EN, reference tables from the code |
+| `modscan.py` | what a mod changes against the game, compare of two mods (green / yellow / red) |
+| `merger.py` + `mergeui.py` | the merger and its tab, conflict dialog, report |
+| `levelcache.py` + `tw1_lhc.py` | level header cache without the SDK |
+| `tw1_par.py`, `tw1_lan.py`, `tw1_lnd.py`, `lndmap.py`, `tw1_wd.py` | format modules shared with the PAR Editor and the Quest Creator |
+| `fieldnames.py` + `tw1_sdk_fields.json` | SDK names of the par fields |
+| `tests/` | `python -m unittest discover -s tests -t .` (real mods from `Desktop\modsTW1` when present) |
 | `updater.py` + `version.py` | update check and self-update from GitHub Releases |
 | `theme.py` | dark theme shared by the TW1 tools |
 | `build_mod_manager_exe.bat` | PyInstaller one-file build (`dist\TW1_Mod_Manager.exe`) |
@@ -74,6 +80,55 @@ Latest exe: `https://github.com/MedievalDev/TW1_ModManager/releases/latest/downl
 CC0 — do what you want with it.
 
 ## Changelog
+
+### v2.2.0 (19.09.2026)
+
+- **What a mod changes.** Rest the mouse on a row: kinds of files, number of
+  changed par fields, quest blocks, texts, and the map tiles. Measured
+  against the game's own files, so "changed" means changed by the mod.
+- **Compatibility colours.** Click a mod: the other rows turn green (no
+  overlap inside files), yellow (up to 40 overlaps, or shared maps / whole
+  files) or red (more, or compiled scripts both change).
+- **Merge mods (experimental).** New tab: tick mods, name the result, merge.
+  par per field, quest file per block, `.lan` per key, alias and dialog
+  tree; maps per tile with `.lnd` + `.phx` always from the same mod, quest
+  markers of the other mod carried over onto the chosen ground, lost game
+  markers put back; a fresh level header cache inside the new mod. Yellow
+  asks per overlap (with the SDK field name, both values and the game's
+  value), red needs a main mod that wins every clash. Sources are only
+  read, an existing name is refused, the new mod arrives switched off.
+  A report of every merge is kept under `merges` in the data folder.
+- **Drag and drop fixed.** A real drop from Explorer ended the tool without
+  a message: the window procedure called Tk while Windows was dispatching
+  the drop. It now only collects the paths and Tk picks them up from its own
+  event loop (measured and fixed on the WD Packer, 19.09.2026).
+- Rows without a registry switch are shown as enabled - that is what the
+  game does.
+- **Help testing.** Help > *Test what is untested* lists what is measured
+  but not yet confirmed in the game (merging, map merging, level cache,
+  colours, dropping with the mouse): steps to tick, what it must look like,
+  *Start* launches the game and notes what is visible from outside, then
+  *Works* / *Does not work*. Two confirmations and the test is passed for
+  everyone, "experimental" disappears from the merge tab. Help > *Report a
+  bug* and *Known issues*; every error window has *Report a bug*. A preview
+  shows exactly what is sent - no paths, no user names, nothing without the
+  button. Server: alchemy-fox.de/game/_feedback.
+- **Level cache follows the mods.** The game reads the markers of every map
+  from `Levels\Map_LevelHeaders.lhc`. A mod with maps needs a cache that
+  knows them, and a cache built while a map mod was installed keeps its maps
+  after the mod is gone. Until now that meant running the SDK's
+  `LevelHeadersCacheGen.bat` by hand. The manager rebuilds the cache after
+  every change of the mod list (enable, disable, install, remove), without
+  the SDK: `tw1_lhc.py` writes the same bytes - measured byte-identical to
+  the SDK exe's output for the game plus a map mod, 0.15 s. The old cache
+  goes to the tool's backup folder. File > *Rebuild level cache now*, and a
+  switch to turn the automatic off. Maps that two enabled mods bring are
+  reported; which one the game takes is not measured.
+- Format of the cache: `"LC\0\0"`, u32 map count, u32 0, then per map
+  (sorted by path) u32 path length, path, and the map body up to the end of
+  the marker block.
+- Map reader: the tail of a marker is a length-prefixed text plus a u32,
+  not 8 fixed bytes (Dream Worlds' Map_E03 carries a text there).
 
 ### v2.1.0 (16.09.2026)
 
