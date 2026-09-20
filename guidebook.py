@@ -622,7 +622,7 @@ class GuideWindow:
         win = cls._open
         if win is not None:
             try:
-                win.win.lift()
+                win.front()
                 win.select(chapter)
                 return win
             except tk.TclError:
@@ -679,6 +679,17 @@ class GuideWindow:
             pass
         self._fill_tree()
         self.select(chapter)
+        self.front()
+
+    def front(self):
+        """Das Fenster nach vorn holen - sonst geht es hinter dem Hauptfenster auf."""
+        try:
+            self.win.lift()
+            self.win.focus_force()
+            self.win.attributes('-topmost', True)          # einmal nach vorn,
+            self.win.after(120, lambda: self.win.attributes('-topmost', False))
+        except tk.TclError:                                # und gleich wieder normal
+            pass
 
     def close(self):
         GuideWindow._open = None
