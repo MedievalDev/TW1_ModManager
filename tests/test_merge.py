@@ -136,8 +136,9 @@ class RealMods(unittest.TestCase):
     def test_red_needs_main(self):
         if 'Elite' in self.paths and 'revamp' in self.paths:
             m, rep, dt, _o = self._check(['Elite', 'revamp'], main=1)
-            self.assertEqual(m.level, 'red')
-            self.assertGreater(m.soft, S.SOFT_LIMIT)
+            scripts = any(c.kind == 'script' for c in m.conflicts)
+            self.assertEqual(m.level, 'red' if scripts else 'yellow')   # many overlaps alone are no longer red
+            self.assertGreater(m.soft, 40)
         if 'Elite' in self.paths and 'skill' in self.paths:
             m, _rep, _dt, out = self._check(['Elite', 'skill'], main=1)
             self.assertEqual(m.level, 'red')

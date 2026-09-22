@@ -1116,7 +1116,7 @@ class App:
             return
         d = os.path.normpath(d)
         if not valid_game_dir(d):
-            messagebox.showerror(APP_NAME, tr('That folder has no WDFiles\\Update16.wd:\n{p}\n\nPick the Two Worlds install folder itself.').format(p=d), parent=self.root)
+            self.error('folder.wrong', 'Picked folder is not a Two Worlds install', tr('That folder has no WDFiles\\Update16.wd:\n{p}\n\nPick the Two Worlds install folder itself.').format(p=d))
             return
         self.game_dir = d
         self.mods_dir = os.path.join(d, 'Mods')
@@ -1232,7 +1232,7 @@ class App:
             messagebox.showwarning(APP_NAME, tr('Archives in the game folder ignore the registry - the game loads them no matter what. Move the file out of the game folder to disable it.'), parent=self.root)
             return
         if game_running():
-            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         new = 0 if registry_mods().get(name, 1) else 1
         registry_set(name, new)
@@ -1266,7 +1266,7 @@ class App:
 
     def _install(self, path, enable, same=False):
         if game_running():
-            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         name = os.path.basename(path)
         dest = os.path.join(self.mods_dir, name)
@@ -1296,7 +1296,7 @@ class App:
         if not name or name.startswith('ROOT::'):
             return
         if game_running():
-            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         if not messagebox.askyesno(APP_NAME, tr('Move {name} to Mods\\_removed and switch it off?\nNothing is deleted.').format(name=name), parent=self.root):
             return
@@ -1368,7 +1368,7 @@ class App:
         if mod is None:
             return
         if game_running():
-            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         self.btn_install.state(['disabled'])
         threading.Thread(target=self._download, args=(mod,), daemon=True).start()
@@ -1468,7 +1468,7 @@ class App:
         if mod is None:
             return
         if game_running():
-            messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+            self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         self.btn_ginstall.state(['disabled'])
 
@@ -1524,7 +1524,7 @@ class App:
             return ''
         if not checked and game_running():
             if manual:
-                messagebox.showerror(APP_NAME, tr('Close Two Worlds first - it reads the mod list only at start.'), parent=self.root)
+                self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return tr('Level cache not rebuilt while the game runs.')
         try:
             import levelcache
@@ -1611,6 +1611,33 @@ class App:
         self.root.mainloop()
 
 
+# What helps, per error key: (guide chapter, tip EN, tip DE). Shown above the
+# technical text of every error, with a button to that chapter.
+ERROR_TIPS = {
+    'install.failed': ('install',
+        'Is it a real Two Worlds .wd? Is Two Worlds closed? If the game sits under Program Files, start the Mod Manager once as the same user who installed the game.',
+        'Ist es eine echte Two-Worlds-.wd? Ist Two Worlds geschlossen? Liegt das Spiel unter Programme, den Mod Manager als derselbe Benutzer starten, der das Spiel installiert hat.'),
+    'game.running': ('trouble',
+        'Close Two Worlds completely, the launcher too, then try again. The game reads the mod list only at start.',
+        'Two Worlds ganz schliessen, auch den Launcher, dann noch einmal. Das Spiel liest die Mod-Liste nur beim Start.'),
+    'folder.wrong': ('start',
+        'Pick the folder that holds TwoWorlds.exe and the WDFiles folder - not WDFiles itself.',
+        'Den Ordner waehlen, in dem TwoWorlds.exe und der Ordner WDFiles liegen - nicht WDFiles selbst.'),
+    'merge.read.failed': ('merge',
+        'One of the ticked archives could not be read. Open it once in the TW1 WD Packer: if that fails too, the file is damaged - download it again.',
+        'Eines der angehakten Archive liess sich nicht lesen. Einmal im TW1 WD Packer oeffnen: klappt das auch nicht, ist die Datei beschaedigt - neu herunterladen.'),
+    'merge.failed': ('merge',
+        'Your mods are untouched. Tick fewer mods to find the one that breaks it, then report the bug - the merge report is attached.',
+        'Deine Mods sind unveraendert. Weniger Mods anhaken, um die eine zu finden, an der es scheitert, dann den Bug melden - der Merge-Bericht haengt an.'),
+    'merge.name.exists': ('merge',
+        'Give the new mod another name. The merger never overwrites a mod.',
+        'Der neuen Mod einen anderen Namen geben. Der Merger ueberschreibt nie eine Mod.'),
+    'crash': ('trouble',
+        'Please report it: the log goes with it, and nothing is sent before you have seen it.',
+        'Bitte melden: das Protokoll geht mit, und nichts wird verschickt, bevor du es gesehen hast.'),
+}
+
+
 class ErrorDialog:
     """An error the user can report: message, OK, "Report a bug", optional guide."""
 
@@ -1622,6 +1649,12 @@ class ErrorDialog:
         win.bind('<Escape>', lambda e: win.destroy())
         f = ttk.Frame(win, padding=16)
         f.pack(fill='both', expand=True)
+        chapter, tip_en, tip_de = ERROR_TIPS.get(key, ('trouble', '', ''))
+        guide = guide or chapter
+        tip = tip_de if _LANG == 'de' else tip_en
+        if tip:
+            ttk.Label(f, text=tr('What helps'), style='Brand.TLabel').pack(anchor='w')
+            ttk.Label(f, text=tip, wraplength=620, justify='left').pack(anchor='w', pady=(2, 10))
         box = tk.Text(f, wrap='word', height=min(14, max(3, shown.count(chr(10)) + 2 + len(shown) // 90)),
                       width=86, bg=theme.FIELD, fg=theme.INK, relief='flat', font=theme.FONT_MONO,
                       highlightthickness=0, padx=8, pady=6)
@@ -1741,6 +1774,7 @@ DE = {
     'Your mods are never changed; the result is a new archive.': 'Deine Mods werden nie veraendert; das Ergebnis ist ein neues Archiv.',
     'Help testing it': 'Beim Testen helfen',
     'Error': 'Fehler', 'Report a bug...': 'Bug melden...', 'Read in the guide': 'Im Guide nachlesen',
+    'What helps': 'Was hilft',
     'Level cache not rebuilt while the game runs.': 'Level-Cache nicht neu gebaut, solange das Spiel laeuft.',
     'Not readable, left out: {names}.': 'Nicht lesbar, ausgelassen: {names}.',
     'Wait until the merge is done.': 'Warte, bis das Zusammenfuehren fertig ist.',
@@ -1765,8 +1799,8 @@ DE = {
     'With {name}:': 'Mit {name}:', 'reading...': 'lese...', 'fits': 'passt', 'overlaps': 'ueberschneidet sich',
     'clashes': 'kollidiert', 'no overlap inside files': 'keine Ueberschneidung innerhalb von Dateien',
     'Merge mods into one new mod': 'Mods zu einer neuen Mod zusammenfuehren',
-    'Tick the mods to merge. Green: no overlap inside files. Yellow: a few overlaps or shared maps, each one is asked. Red: too many overlaps or compiled scripts - one mod has to be the main mod and wins every clash. The source mods are only read.':
-        'Die Mods anhaken, die zusammen sollen. Gruen: keine Ueberschneidung innerhalb von Dateien. Gelb: wenige Ueberschneidungen oder gemeinsame Karten, jede wird gefragt. Rot: zu viele Ueberschneidungen oder kompilierte Skripte - eine Mod muss Haupt-Mod sein und gewinnt jede Kollision. Die Quell-Mods werden nur gelesen.',
+    'Tick the mods to merge. Green: no overlap inside files. Yellow: overlaps inside files, shared maps or whole files - each one is asked, however many there are. Red: both change compiled scripts - one mod has to be the main mod and keeps its scripts; everything else is still asked. The source mods are only read.':
+        'Die Mods anhaken, die zusammen sollen. Gruen: keine Ueberschneidung innerhalb von Dateien. Gelb: Ueberschneidungen in Dateien, gemeinsame Karten oder ganze Dateien - jede wird gefragt, egal wie viele. Rot: beide aendern kompilierte Skripte - eine Mod muss Haupt-Mod sein und behaelt ihre Skripte; alles andere wird trotzdem gefragt. Die Quell-Mods werden nur gelesen.',
     'EXPERIMENTAL - the merged mod may be buggy or keep the game from starting. Your mods are never changed; the result is a new archive.':
         'EXPERIMENTELL - die zusammengefuehrte Mod kann verbugt sein oder das Spiel am Starten hindern. Deine Mods werden nie veraendert; das Ergebnis ist ein neues Archiv.',
     'Changes': 'Aendert', 'With the ticked mods': 'Mit den angehakten Mods',
@@ -1780,6 +1814,12 @@ DE = {
     'Tick at least two mods.': 'Mindestens zwei Mods anhaken.',
     'Green: no overlap inside files - merges without a question.': 'Gruen: keine Ueberschneidung innerhalb von Dateien - laeuft ohne Rueckfrage.',
     'Yellow (experimental): overlaps are asked one by one.': 'Gelb (experimentell): Ueberschneidungen werden einzeln gefragt.',
+    'Red (experimental): both mods change compiled scripts. Choose a main mod - it keeps its scripts; everything else is asked one by one.':
+        'Rot (experimentell): beide Mods aendern kompilierte Skripte. Haupt-Mod waehlen - sie behaelt ihre Skripte; alles andere wird einzeln gefragt.',
+    'Both mods change compiled scripts ({n}). Scripts cannot be mixed, so choose a main mod first: it keeps its scripts. Everything else is asked one by one.':
+        'Beide Mods aendern kompilierte Skripte ({n}). Skripte lassen sich nicht mischen, deshalb zuerst eine Haupt-Mod waehlen: sie behaelt ihre Skripte. Alles andere wird einzeln gefragt.',
+    'Scripts: {k} go to the main mod {main}.': 'Skripte: {k} gehen an die Haupt-Mod {main}.',
+    'The {k} compiled scripts stay with the main mod.': 'Die {k} kompilierten Skripte bleiben bei der Haupt-Mod.',
     'Red (experimental): choose a main mod - it wins every clash.': 'Rot (experimentell): Haupt-Mod waehlen - sie gewinnt jede Kollision.',
     'Still reading the archives...': 'Archive werden noch gelesen...',
     '{name} exists already - choose another name. The merger never overwrites a mod.':

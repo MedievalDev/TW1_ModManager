@@ -182,8 +182,8 @@ class Merge:
 
     @property
     def level(self):
-        if any(c.kind == 'script' for c in self.conflicts) or self.soft > S.SOFT_LIMIT:
-            return 'red'
+        if any(c.kind == 'script' for c in self.conflicts):
+            return 'red'                      # only scripts force a main mod
         return 'yellow' if self.conflicts else 'green'
 
     # -- values for the dialog ---------------------------------------------

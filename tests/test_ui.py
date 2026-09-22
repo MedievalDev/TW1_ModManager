@@ -64,6 +64,7 @@ class Window(unittest.TestCase):
         messagebox.askyesno = lambda *a, **k: (cls.asked.append(('yesno', a[1])), True)[1]
         for n in ('showinfo', 'showwarning', 'showerror'):
             setattr(messagebox, n, lambda *a, _n=n, **k: cls.asked.append((_n, a[1])))
+        M.ErrorDialog = lambda app, key, message, shown, guide=None, title=None: cls.asked.append(('error', key))
         cfg = M.Config(); cfg['guide_seen'] = True; cfg['update_check'] = False; cfg['game_dir'] = GAME; cfg.save()
         cls.app = M.App({'tab': 3})
         cls.app.mods_dir = cls.mods
@@ -102,8 +103,8 @@ class Window(unittest.TestCase):
         self.assertTrue('scripts' in tip.lower() or 'skripte' in tip.lower())
         app.tree.selection_set('Elite.wd'); app._colour_fit()
         tags = {i: app.tree.item(i, 'tags')[0] for i in app.tree.get_children()}
-        self.assertEqual(tags['revamp.wd'], 'fit_red')
-        self.assertEqual(tags['skill.wd'], 'fit_red')
+        self.assertEqual(tags['revamp.wd'], 'fit_yellow')   # many par overlaps, no shared script
+        self.assertEqual(tags['skill.wd'], 'fit_red')       # both change rpgcompute.eco
         self.assertEqual(tags['Yamalin.wd'], 'fit_yellow')
         self.assertEqual(tags['Pirate.wd'], 'fit_green')
         self.assertIn('Elite', app._row_tip('revamp.wd'))
@@ -133,17 +134,55 @@ class Window(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.tmp, 'merges', 'Green Test.txt')))
         mt.name.set('Green Test'); mt._toggle(self.path('revamp')); mt._toggle(self.path('skill'))
         self.asked.clear(); mt.merge()
-        self.assertTrue(any(k == 'showerror' for k, _ in self.asked), 'same name must be refused')
+        self.assertIn(('error', 'merge.name.exists'), self.asked, 'same name must be refused')
 
-    def test_4_red_needs_main(self):
+    def _auto_dialog(self, seen):
+        """The real conflict dialog, built without blocking, answered at once."""
+        import mergeui
+        import tkinter as tk
+        real = mergeui.ConflictDialog.__init__
+
+        def fake(dlg, app, m, main, *rest):
+            wait, grab = tk.Toplevel.wait_window, tk.Toplevel.grab_set
+            tk.Toplevel.wait_window = lambda self, *a: None
+            tk.Toplevel.grab_set = lambda self: None
+            try:
+                real(dlg, app, m, main, *rest)
+            finally:
+                tk.Toplevel.wait_window, tk.Toplevel.grab_set = wait, grab
+            seen['n'] = len(dlg.rows)
+            seen['kinds'] = {c.kind for c in dlg.rows.values()}
+            dlg._ok()
+        mergeui.ConflictDialog.__init__ = fake
+        return real
+
+    def test_4_many_overlaps_still_ask_scripts_need_main(self):
+        import mergeui
         mt = self.app.merge_tab
-        mt.clear(); mt._toggle(self.path('Elite')); mt._toggle(self.path('revamp'))
-        mt.name.set('Red Test'); mt.set_main(None)
-        self.asked.clear(); mt.merge(); self.app.root.update()
-        self.assertTrue(any(k == 'showwarning' for k, _ in self.asked))
-        self.assertFalse(os.path.exists(os.path.join(self.mods, 'Red Test.wd')))
-        mt.set_main(self.path('revamp')); mt.merge()
-        self.assertTrue(self.pump(lambda: os.path.exists(os.path.join(self.mods, 'Red Test.wd')) and not mt.checked, 90))
+        seen = {}
+        real = self._auto_dialog(seen)
+        try:
+            # Elite + revamp: well over 40 overlaps - since 2.2.2 no longer red, every one is asked
+            mt.clear(); mt._toggle(self.path('Elite')); mt._toggle(self.path('revamp'))
+            mt.name.set('Many Test'); mt.set_main(None)
+            self.asked.clear(); mt.merge(); self.app.root.update()
+            if not seen:                          # the pair also shares scripts: main mod first
+                self.assertTrue(any(k == 'showwarning' for k, _ in self.asked))
+                mt.set_main(self.path('revamp')); mt.merge()
+            self.assertGreater(seen.get('n', 0), 40, 'the dialog lists every overlap')
+            self.assertNotIn('script', seen['kinds'], 'scripts never appear in the dialog')
+            self.assertTrue(self.pump(lambda: os.path.exists(os.path.join(self.mods, 'Many Test.wd')) and not mt.checked, 120))
+            # Elite + skill: both change rpgcompute.eco - red, a main mod is needed
+            seen.clear()
+            mt.clear(); mt._toggle(self.path('Elite')); mt._toggle(self.path('skill'))
+            mt.name.set('Script Test'); mt.set_main(None)
+            self.asked.clear(); mt.merge(); self.app.root.update()
+            self.assertTrue(any(k == 'showwarning' for k, _ in self.asked))
+            self.assertFalse(os.path.exists(os.path.join(self.mods, 'Script Test.wd')))
+            mt.set_main(self.path('skill')); mt.merge()
+            self.assertTrue(self.pump(lambda: os.path.exists(os.path.join(self.mods, 'Script Test.wd')) and not mt.checked, 120))
+        finally:
+            mergeui.ConflictDialog.__init__ = real
 
     def test_5_yellow_dialog(self):
         import mergeui
@@ -151,14 +190,14 @@ class Window(unittest.TestCase):
         seen = {}
         real = mergeui.ConflictDialog.__init__
 
-        def fake(dlg, app, m, main):
+        def fake(dlg, app, m, main, *rest):
             # build the real dialog without blocking: no grab, no wait
             import tkinter as tk
             wait, grab = tk.Toplevel.wait_window, tk.Toplevel.grab_set
             tk.Toplevel.wait_window = lambda self, *a: None
             tk.Toplevel.grab_set = lambda self: None
             try:
-                real(dlg, app, m, main)
+                real(dlg, app, m, main, *rest)
             finally:
                 tk.Toplevel.wait_window, tk.Toplevel.grab_set = wait, grab
             seen['n'] = len(dlg.rows)

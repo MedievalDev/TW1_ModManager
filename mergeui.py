@@ -222,7 +222,7 @@ class MergeTab:
         hdr = ttk.Frame(tab)
         hdr.pack(fill='x')
         ttk.Label(hdr, text=tr('Merge mods into one new mod'), style='Muted.TLabel').pack(side='left')
-        app.help_mark(hdr, tr('Tick the mods to merge. Green: no overlap inside files. Yellow: a few overlaps or shared maps, each one is asked. Red: too many overlaps or compiled scripts - one mod has to be the main mod and wins every clash. The source mods are only read.'), 'merge')
+        app.help_mark(hdr, tr('Tick the mods to merge. Green: no overlap inside files. Yellow: overlaps inside files, shared maps or whole files - each one is asked, however many there are. Red: both change compiled scripts - one mod has to be the main mod and keeps its scripts; everything else is still asked. The source mods are only read.'), 'merge')
         # "experimental" until two people confirmed the in-game tests (untested.json)
         fb = getattr(app, 'fb', None)
         experimental = fb is None or fb.experimental('merge') or fb.experimental('merge-maps')
@@ -330,17 +330,13 @@ class MergeTab:
             return
         rank = {'green': 0, 'unknown': 1, 'yellow': 2, 'red': 3}
         level, lines = 'green', []
-        soft = 0
         for i, p in enumerate(self.checked):
             lv, ln = self.app.insight.worst(p, self.checked[i + 1:])
             level = max(level, lv, key=rank.get)
             lines += [os.path.basename(p) + ' + ' + x for x in ln]
-            soft += sum((self.app.insight.compare(p, o) or {}).get('soft', 0) for o in self.checked[i + 1:])
-        if level == 'yellow' and soft > modscan.SOFT_LIMIT:
-            level = 'red' 
         text = {'green': tr('Green: no overlap inside files - merges without a question.'),
                 'yellow': tr('Yellow (experimental): overlaps are asked one by one.'),
-                'red': tr('Red (experimental): choose a main mod - it wins every clash.'),
+                'red': tr('Red (experimental): both mods change compiled scripts. Choose a main mod - it keeps its scripts; everything else is asked one by one.'),
                 'unknown': tr('Still reading the archives...')}[level]
         colour = {'green': theme.OK, 'yellow': theme.GOLD, 'red': theme.ERR, 'unknown': theme.MUT}[level]
         self.verdict.configure(text=text + ('\n' + '\n'.join(lines[:6]) if lines else ''), fg=colour)
@@ -414,8 +410,9 @@ class MergeTab:
             return
         out = os.path.join(app.mods_dir, merger.safe_name(self.name.get()))
         if os.path.exists(out) or os.path.basename(out).lower() in {os.path.basename(p).lower() for p in self.paths()}:
-            messagebox.showerror(app.APP_NAME, tr('{name} exists already - choose another name. The merger never overwrites a mod.').format(
-                name=os.path.basename(out)), parent=app.root)
+            app.error('merge.name.exists', 'Merge target exists already',
+                      tr('{name} exists already - choose another name. The merger never overwrites a mod.').format(
+                          name=os.path.basename(out)))
             return
         app.root.configure(cursor='watch')
         app.root.update_idletasks()
@@ -430,21 +427,22 @@ class MergeTab:
         app.root.configure(cursor='')
         main = self.checked.index(self.main_path) if self.main_path in self.checked else None
         decisions = {}
-        if m.level == 'red':
-            if main is None:
-                messagebox.showwarning(app.APP_NAME, tr('Red combination ({n} overlaps). Choose a main mod first: it wins every clash, the other mods add what does not clash.').format(n=len(m.conflicts)), parent=app.root)
-                self.main_box.focus_set()
-                return
-        elif m.conflicts:
-            dlg = ConflictDialog(app, m, main)
+        scripts = [c for c in m.conflicts if c.kind == 'script']
+        rest = [c for c in m.conflicts if c.kind != 'script']
+        if scripts and main is None:
+            messagebox.showwarning(app.APP_NAME, tr('Both mods change compiled scripts ({n}). Scripts cannot be mixed, so choose a main mod first: it keeps its scripts. Everything else is asked one by one.').format(n=len(scripts)), parent=app.root)
+            self.main_box.focus_set()
+            return
+        if rest:
+            dlg = ConflictDialog(app, m, main, rest, len(scripts))
             if dlg.result is None:
                 return
             decisions = dlg.result
         warn = tr('Merge {n} mods into {name}?\n\nThis is experimental: the result may be buggy or keep the game from starting. Your mods stay untouched.').format(
             n=len(self.checked), name=os.path.basename(out))
-        if m.level == 'red':
-            warn += '\n\n' + tr('RED: {k} clashes go to the main mod {main}.').format(
-                k=len(m.conflicts), main=os.path.basename(self.main_path))
+        if scripts:
+            warn += '\n\n' + tr('Scripts: {k} go to the main mod {main}.').format(
+                k=len(scripts), main=os.path.basename(self.main_path))
         if not messagebox.askyesno(app.APP_NAME, warn, icon='warning', parent=app.root):
             return
         self._run(m, out, decisions, main)
@@ -520,12 +518,13 @@ class MergeTab:
 class ConflictDialog:
     """One row per overlap, a choice per row; the rest goes to the default."""
 
-    def __init__(self, app, m, main):
+    def __init__(self, app, m, main, conflicts=None, scripts=0):
         self.app, self.m = app, m
         tr = app.tr
         self.result = None
         self.default = main
-        self.choice = {c.cid: (main if main in c.mods else c.mods[0]) for c in m.conflicts}
+        self.conflicts = list(m.conflicts if conflicts is None else conflicts)
+        self.choice = {c.cid: (main if main in c.mods else c.mods[0]) for c in self.conflicts}
         self.win = win = tk.Toplevel(app.root)
         win.title(tr('Overlaps - who wins?'))
         win.transient(app.root)
@@ -536,8 +535,10 @@ class ConflictDialog:
         win.protocol('WM_DELETE_WINDOW', self._cancel)
         outer = ttk.Frame(win, padding=12)
         outer.pack(fill='both', expand=True)
-        ttk.Label(outer, text=tr('{n} places are changed by more than one mod. Pick the winner per row, or give all to one mod.').format(n=len(m.conflicts)),
-                  style='Muted.TLabel', wraplength=940, justify='left').pack(anchor='w')
+        head = tr('{n} places are changed by more than one mod. Pick the winner per row, or give all to one mod.').format(n=len(self.conflicts))
+        if scripts:
+            head += ' ' + tr('The {k} compiled scripts stay with the main mod.').format(k=scripts)
+        ttk.Label(outer, text=head, style='Muted.TLabel', wraplength=940, justify='left').pack(anchor='w')
         bar = ttk.Frame(outer)
         bar.pack(fill='x', pady=(8, 6))
         ttk.Label(bar, text=tr('Give all to:')).pack(side='left')
@@ -564,7 +565,7 @@ class ConflictDialog:
         pane.add(self.detail, weight=2)
         self.rows = {}
         groups = {}
-        for n, c in enumerate(m.conflicts):
+        for n, c in enumerate(self.conflicts):
             if c.group not in groups:
                 groups[c.group] = self.tree.insert('', 'end', text=tr(c.group), open=True)
             iid = self.tree.insert(groups[c.group], 'end', text=c.label, values=(m.names[self.choice[c.cid]],))

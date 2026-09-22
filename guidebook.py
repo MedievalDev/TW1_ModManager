@@ -298,14 +298,14 @@ def ch_merge():
     import modscan
     rows = [(_l('Gruen', 'green'), _l('keine Ueberschneidung innerhalb von Dateien', 'no overlap inside files'),
              _l('laeuft ohne Rueckfrage', 'merges without a question')),
-            (_l('Gelb', 'yellow'), _l('bis %d Ueberschneidungen in Dateien, gemeinsame Karten oder ganze Dateien'
-                                      % modscan.SOFT_LIMIT,
-                                      'up to %d overlaps inside files, shared maps or whole files' % modscan.SOFT_LIMIT),
-             _l('jede wird gefragt', 'each one is asked')),
-            (_l('Rot', 'red'), _l('mehr als %d Ueberschneidungen, oder kompilierte Skripte (.eco) in beiden'
-                                  % modscan.SOFT_LIMIT,
-                                  'more than %d overlaps, or compiled scripts (.eco) in both' % modscan.SOFT_LIMIT),
-             _l('Haupt-Mod waehlen, sie gewinnt jede Kollision', 'choose a main mod, it wins every clash'))]
+            (_l('Gelb', 'yellow'), _l('Ueberschneidungen in Dateien, gemeinsame Karten oder ganze Dateien',
+                                      'overlaps inside files, shared maps or whole files'),
+             _l('jede wird gefragt, egal wie viele; "alle an eine Mod" geht mit einem Klick',
+                'each one is asked, however many; "give all to one mod" is one click')),
+            (_l('Rot', 'red'), _l('beide aendern kompilierte Skripte (.eco)',
+                                  'both change compiled scripts (.eco)'),
+             _l('Haupt-Mod waehlen, sie behaelt ihre Skripte; alles andere wird trotzdem gefragt',
+                'choose a main mod, it keeps its scripts; everything else is still asked'))]
     units = [('Parameters\\TwoWorlds.par', _l('je Feld eines Eintrags; neue Eintraege als Ganzes',
                                               'per field of an entry; new entries as a whole')),
              ('Scripts\\Quests\\TwoWorldsQuests.qtx', _l('je Block (QUEST, NPC, CONTAINER bis END) und je LOCATION-Zeile',
@@ -347,7 +347,7 @@ fit it.
 ## Colours
 
 ''') + _table([_l('Farbe', 'Colour'), _l('Bedeutung', 'Meaning'), _l('Beim Zusammenfuehren', 'When merging')], rows) \
-        + '\n\n' + _source('modscan.py, compare / SOFT_LIMIT') + _l('''
+        + '\n\n' + _source('modscan.py, compare') + _l('''
 ## Wie fein zusammengefuehrt wird
 
 ''', '''
@@ -357,18 +357,61 @@ fit it.
 "Geaendert" heisst: anders als die Datei des Spiels. Aendern zwei Mods
 dasselbe Feld auf denselben Wert, ist das keine Ueberschneidung.
 
-## Ablauf
+## Schritt fuer Schritt
 
-1. Mods anhaken. Die Reihenfolge der Haken ist die Reihenfolge der Mods.
-2. Namen der neuen Mod eintragen. Ein vorhandener Name wird abgelehnt.
-3. **Haupt-Mod** (bei Rot Pflicht): ihre Dateien bleiben Byte fuer Byte, wo
-   keine andere Mod etwas aendert, und sie gewinnt jede Kollision, die du
-   nicht selbst entscheidest.
-4. Bei Gelb oeffnet sich die Liste der Ueberschneidungen: links die Stelle,
-   rechts die Werte beider Mods. "Give all to" gibt den Rest einer Mod.
-5. Die neue Mod landet ausgeschaltet im Mods-Ordner. Der Manager bietet an,
-   sie einzuschalten und die Quell-Mods auszuschalten - beides zugleich
-   wuerde alles doppelt laden.
+1. **Reiter Merge mods oeffnen.** Die Liste zeigt jede Mod im Mods-Ordner.
+   Mit **Add archive from elsewhere...** kommt auch eine `.wd` von anderswo
+   dazu, ohne sie vorher einzulegen.
+2. **Mindestens zwei Mods anhaken.** Sobald zwei Haken sitzen, faerbt sich
+   jede Zeile danach, wie sie zu den angehakten passt, und unter der Liste
+   steht das Urteil (gruen, gelb oder rot) mit den ersten Ueberschneidungen.
+   Die Reihenfolge der Haken ist die Reihenfolge der Mods.
+3. **Namen der neuen Mod eintragen.** Ein Name, den es im Mods-Ordner schon
+   gibt, wird abgelehnt - der Merger ueberschreibt nie etwas.
+4. **Haupt-Mod waehlen (nur bei Rot noetig).** Rot heisst: beide Mods
+   aendern kompilierte Skripte (`.eco`), und die lassen sich nicht mischen.
+   Die Haupt-Mod behaelt ihre Skripte. Bei Gelb ist sie freiwillig: dann ist
+   sie im Auswahlfenster ueberall vorgewaehlt.
+5. **Merge... klicken.** Gibt es Ueberschneidungen ausserhalb von Skripten,
+   oeffnet sich das **Auswahlfenster** (siehe unten) - egal ob es fuenf oder
+   fuenfhundert sind.
+6. **Bestaetigen.** Die neue Mod entsteht im Mods-Ordner und ist
+   **ausgeschaltet**. Der Manager fragt, ob er sie einschalten und die
+   Quell-Mods ausschalten soll - beides zugleich wuerde alles doppelt laden.
+7. **Im Spiel testen**, am besten mit einem neuen Spielstand. Wenn es nicht
+   passt: neue Mod ausschalten, Quell-Mods wieder ein - nichts ist verloren.
+
+## Das Auswahlfenster
+
+Links steht jede Stelle, die mehr als eine Mod aendert, nach Art gruppiert:
+Par-Felder, Quest-Bloecke, Texte, Karten, ganze Dateien. Rechts steht zur
+gewaehlten Stelle:
+
+- je Mod ein Knopf mit ihrem Wert - einen anklicken heisst: dieser Wert kommt
+  in die neue Mod,
+- darunter **The game itself**: der Wert im Spiel ohne Mods, zum Vergleich,
+- bei Par-Feldern der Feldname aus dem SDK, damit klar ist, was sich aendert.
+
+Oben in der Leiste **Give all to:** mit einem Knopf je Mod - ein Klick gibt
+ihr jede Stelle, die sie ueberhaupt aendert. Praktisch bei vielen
+Ueberschneidungen: erst alles an die Mod geben, die meistens gewinnen soll,
+dann nur die Ausnahmen einzeln umstellen. Die Spalte **Winner** zeigt fuer
+jede Zeile, wer gerade gewinnt.
+
+**Merge with these choices** baut die Mod, **Cancel** bricht ohne Folgen ab.
+Stellen, die nur eine Mod aendert, erscheinen gar nicht: die werden immer
+uebernommen.
+
+## Nach dem Zusammenfuehren
+
+- **Bericht:** zu jeder neuen Mod liegt unter `merges` im Datenordner des
+  Tools ein Textbericht - welche Datei aus welcher Mod kam, jede Entscheidung
+  im Auswahlfenster, jeder uebertragene Marker.
+- **Level-Header-Cache:** bringt das Ergebnis Karten mit, baut der Manager
+  den Cache fuer die neue Mod selbst - ohne SDK.
+- **Rueckgaengig:** die Quell-Mods sind unveraendert. Neue Mod ausschalten
+  oder entfernen (sie wandert nach `Mods\_removed\`), Quell-Mods wieder
+  einschalten.
 
 ## Karten
 
@@ -389,18 +432,61 @@ Zusammenfuehrung liegt im Datenordner des Tools unter `merges`.
 "Changed" means: different from the game's own file. Two mods that set the
 same field to the same value do not overlap.
 
-## Steps
+## Step by step
 
-1. Tick the mods. The order of the ticks is the order of the mods.
-2. Type the name of the new mod. An existing name is refused.
-3. **Main mod** (required for red): its files stay byte for byte where no
-   other mod changes anything, and it wins every clash you do not decide
-   yourself.
-4. For yellow the list of overlaps opens: the place on the left, the values
-   of both mods on the right. "Give all to" hands the rest to one mod.
-5. The new mod lands in the Mods folder, switched off. The manager offers to
-   enable it and switch the source mods off - both at once would load
-   everything twice.
+1. **Open the Merge mods tab.** The list shows every mod in the Mods
+   folder. **Add archive from elsewhere...** brings in a `.wd` from another
+   place without installing it first.
+2. **Tick at least two mods.** As soon as two are ticked, every row takes
+   the colour of how it fits the ticked ones, and below the list the verdict
+   (green, yellow or red) names the first overlaps. The order of the ticks is
+   the order of the mods.
+3. **Type the name of the new mod.** A name that already exists in the Mods
+   folder is refused - the merger never overwrites anything.
+4. **Pick a main mod (needed only for red).** Red means: both mods change
+   compiled scripts (`.eco`), and those cannot be mixed. The main mod keeps
+   its scripts. For yellow it is optional: it is then preselected everywhere
+   in the choice window.
+5. **Click Merge...** If there are overlaps outside scripts, the **choice
+   window** opens (see below) - whether there are five of them or five
+   hundred.
+6. **Confirm.** The new mod appears in the Mods folder, **switched off**.
+   The manager asks whether to enable it and switch the source mods off -
+   both at once would load everything twice.
+7. **Test in the game**, best with a new save. If it does not fit: switch
+   the new mod off and the source mods back on - nothing is lost.
+
+## The choice window
+
+On the left is every place that more than one mod changes, grouped by kind:
+par fields, quest blocks, texts, maps, whole files. On the right, for the
+selected place:
+
+- one button per mod with its value - clicking one means: this value goes
+  into the new mod,
+- below it **The game itself**: the value in the game without mods, to
+  compare,
+- for par fields the field name from the SDK, so it is clear what changes.
+
+At the top **Give all to:** has one button per mod - one click hands it
+every place it changes at all. Handy with many overlaps: first give
+everything to the mod that should mostly win, then switch only the
+exceptions one by one. The **Winner** column shows who wins each row right
+now.
+
+**Merge with these choices** builds the mod, **Cancel** stops without any
+effect. Places only one mod changes do not appear at all: those are always
+taken over.
+
+## After the merge
+
+- **Report:** for every new mod there is a text report under `merges` in the
+  tool's data folder - which file came from which mod, every choice made in
+  the window, every marker carried over.
+- **Level header cache:** if the result brings maps, the manager builds the
+  cache for the new mod itself - no SDK needed.
+- **Undo:** the source mods are unchanged. Switch the new mod off or remove
+  it (it moves to `Mods\_removed\`), switch the source mods back on.
 
 ## Maps
 

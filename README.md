@@ -81,6 +81,19 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.2.2 (22.09.2026)
+
+- **No overlap limit in the merger.** Before, more than 40 overlaps turned a
+  merge red and the choice window never opened - the main mod simply won
+  everything. Now red means only one thing: both mods change compiled
+  scripts, which cannot be mixed. Every other overlap is asked in the choice
+  window, however many there are; "Give all to" settles the bulk in one
+  click, then you switch the exceptions. Scripts stay with the main mod.
+- **Errors say what helps.** Every error window shows a short tip, a button
+  to the matching guide chapter and "Report a bug".
+- The guide chapter "Merging mods" is now a full step-by-step walk-through,
+  including the choice window, the report and how to undo a merge.
+
 ### v2.2.0 (19.09.2026)
 
 - **What a mod changes.** Rest the mouse on a row: kinds of files, number of

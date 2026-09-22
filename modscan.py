@@ -15,10 +15,11 @@ wins), so "changed" means changed by the mod, not merely shipped. Maps
 (``Levels\\Map_X.lnd`` with ``Levels\\physic\\Map_X.phx``) count per tile, every
 other file as a whole. ``Map_LevelHeaders.lhc`` never counts: it is rebuilt.
 
-Levels (Marco 2026-09-19): green = no overlap inside files; yellow = up to
-SOFT_LIMIT overlaps, or overlapping tiles/whole files, each one asked; red =
-more than that, or compiled scripts (.eco) both mods change - there one mod
-has to be the main mod and wins every clash.
+Levels (Marco 2026-09-19, limit removed 2026-09-22): green = no overlap
+inside files; yellow = overlaps inside files, tiles or whole files - each one
+is asked, however many there are; red = compiled scripts (.eco) both mods
+change. Scripts cannot be mixed, so there one mod has to be the main mod and
+keeps its scripts; every other overlap is still asked.
 
 The scan of one archive is cached on disk by (mtime, size, format).
 """
@@ -36,7 +37,6 @@ import tw1_lnd
 import tw1_par
 
 FORMAT = 6
-SOFT_LIMIT = 40
 BS = chr(92)
 PAR = 'parameters\\twoworlds.par'
 QTX = 'scripts\\quests\\twoworldsquests.qtx'
@@ -630,7 +630,7 @@ def compare(path_a, info_a, path_b, info_b):
     soft = len(out['par']) + len(out['qtx']) + len(out['lan']) + len(out['trees'])
     out['soft'] = soft
     asks = soft + len(out['tiles']) + len(out['files'])
-    if out['scripts'] or soft > SOFT_LIMIT:
+    if out['scripts']:                        # compiled scripts cannot be mixed
         out['level'] = 'red'
     elif asks:
         out['level'] = 'yellow'
