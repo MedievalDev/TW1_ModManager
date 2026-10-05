@@ -81,6 +81,13 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.3.1 (05.10.2026)
+
+- **Sizes under 1 MB show in KB** (before: "0.0 MB" for a 40 KB mod).
+- **Side panel in the Community (GitHub) tab** too: name, the description
+  from the `.txt` next to the archive, a picture if the archive has one
+  (otherwise the Two Worlds logo).
+
 ### v2.3.0 (05.10.2026)
 
 - **Side panel in "My Mods (server)".** Click a mod: picture gallery with

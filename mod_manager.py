@@ -430,6 +430,10 @@ def help_mark(parent, text, chapter, app, panel=False):
 
 
 def fmt_size(n):
+    if n < 1024:
+        return f'{n} B'
+    if n < 1048576:
+        return f'{n / 1024:.0f} KB'
     return f'{n / 1048576:.1f} MB'
 
 
@@ -1256,11 +1260,14 @@ class App:
         lnk = ttk.Label(hdr, text=GH_NAME, style='Link.TLabel', cursor='hand2')
         lnk.pack(side='right')
         lnk.bind('<Button-1>', lambda e: webbrowser.open(GH_PAGE))
-        self.gtree = ttk.Treeview(tab, columns=('size', 'status'), show='tree headings')
+        self.gside = ModSidePanel(self, tab)
+        left = ttk.Frame(tab)
+        left.pack(side='left', fill='both', expand=True)
+        self.gtree = ttk.Treeview(left, columns=('size', 'status'), show='tree headings')
         self.gtree.heading('#0', text=tr('Mod archive'))
         self.gtree.heading('size', text=tr('Size'))
         self.gtree.heading('status', text=tr('On this PC'))
-        self.gtree.column('#0', width=360)
+        self.gtree.column('#0', width=300)
         self.gtree.column('size', width=90, anchor='e')
         self.gtree.column('status', width=160, anchor='center')
         self.gtree.pack(fill='both', expand=True)
@@ -1269,9 +1276,7 @@ class App:
         self.gtree.tag_configure('off', foreground=theme.MUT)
         self.gtree.bind('<<TreeviewSelect>>', lambda ev: self._show_gh_desc())
         self.gtree.bind('<Double-1>', lambda ev: self.install_github_mod())
-        self.lbl_gdesc = ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left')
-        self.lbl_gdesc.pack(anchor='w', pady=(8, 0))
-        btns = ttk.Frame(tab)
+        btns = ttk.Frame(left)
         btns.pack(fill='x', pady=(10, 0))
         self.btn_ginstall = ttk.Button(btns, text=tr('Install / update'), style='Accent.TButton',
                                        command=self.install_github_mod)
@@ -1280,7 +1285,7 @@ class App:
                    command=lambda: threading.Thread(target=self._fetch_github, daemon=True).start()
                    ).pack(side='left', padx=6)
         ttk.Button(btns, text=tr('Open on GitHub'), command=lambda: webbrowser.open(GH_PAGE)).pack(side='right')
-        ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left',
+        ttk.Label(left, style='Muted.TLabel', wraplength=520, justify='left',
                   text=tr('Community mods collected by InsideTwoWorlds. Each download is checked against the file hash GitHub stores; existing archives get a .backup copy before an update. Read the description before you install.')
                   ).pack(anchor='w', pady=(8, 0))
         return tab
@@ -1662,12 +1667,17 @@ class App:
             if not isinstance(entries, list):
                 raise ValueError(entries.get('message', 'unexpected answer'))
             txts = {e['name']: e['download_url'] for e in entries if e['type'] == 'file' and e['name'].lower().endswith('.txt')}
+            pics = {e['name'].lower(): e['download_url'] for e in entries if e['type'] == 'file'
+                    and e['name'].lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))}
             mods = []
             for e in entries:
                 if e['type'] != 'file' or not e['name'].lower().endswith('.wd'):
                     continue
+                stem = e['name'].lower()
+                images = [u for n, u in sorted(pics.items()) if n.startswith(stem + '.') or n.startswith(stem[:-3] + '.')]
                 mods.append({'name': e['name'], 'size': e['size'], 'sha': e['sha'], 'url': e['download_url'],
-                             'txt_url': txts.get(e['name'] + '.txt') or txts.get(e['name'][:-3] + '.td.txt')})
+                             'txt_url': txts.get(e['name'] + '.txt') or txts.get(e['name'][:-3] + '.td.txt'),
+                             'images': images})
             self.github = sorted(mods, key=lambda m: m['name'].lower())
         except Exception as exc:
             self.status(tr('GitHub list not available: {e}').format(e=exc), error=True)
@@ -1696,6 +1706,11 @@ class App:
         if sel and self.gtree.exists(sel[0]):
             self.gtree.selection_set(sel[0])
 
+    def _gh_panel(self, mod, text):
+        self.gside.show({'id': mod['name'], 'name': re.sub(r'\.wd$', '', mod['name'], flags=re.I),
+                         'description': text, 'images': mod.get('images', []),
+                         'credits': [tr('Archive: {name}').format(name=GH_NAME)]})
+
     def _show_gh_desc(self):
         sel = self.gtree.selection()
         if not sel or self.github is None:
@@ -1705,25 +1720,26 @@ class App:
         if mod is None:
             return
         if name in self.gh_desc:
-            self.lbl_gdesc.configure(text=self.gh_desc[name])
+            self._gh_panel(mod, self.gh_desc[name])
             return
         if not mod['txt_url']:
             self.gh_desc[name] = tr('(no description in the archive)')
-            self.lbl_gdesc.configure(text=self.gh_desc[name])
+            self._gh_panel(mod, self.gh_desc[name])
             return
-        self.lbl_gdesc.configure(text=tr('loading description...'))
+        self._gh_panel(mod, tr('loading description...'))
 
         def work():
             try:
-                text = http_get(mod['txt_url']).decode('utf-8', 'replace').strip()
+                text = http_get(mod['txt_url']).decode('utf-8', 'replace').replace('\r\n', '\n').replace('\r', '\n')
+                text = re.sub(r'\n{3,}', '\n\n', text).strip()
             except Exception as exc:
                 text = tr('(description not available: {e})').format(e=exc)
-            self.gh_desc[name] = text[:1200]
+            self.gh_desc[name] = text[:6000]
 
             def show():
                 cur = self.gtree.selection()
                 if cur and cur[0] == name:
-                    self.lbl_gdesc.configure(text=self.gh_desc[name])
+                    self._gh_panel(mod, self.gh_desc[name])
             self.root.after(0, show)
         threading.Thread(target=work, daemon=True).start()
 
@@ -2215,7 +2231,7 @@ DE = {
         'Legt Mods von Two Worlds 1 ein, schaltet sie ein und aus - die .wd-Archive im\nMods-Ordner und ihre Schalter in der Registry. Nichts wird je geloescht.\nRegistry-Logik nach buglords Mod Selector.',
     'Merged mods': 'Zusammengefuehrte Mods', 'Readme': 'Readme', 'Credits': 'Credits', 'Select a mod': 'Mod auswaehlen',
     'No pictures for this mod yet.': 'Noch keine Bilder zu dieser Mod.', '(picture not available)': '(Bild nicht erreichbar)',
-    'loading picture...': 'lade Bild...',
+    'loading picture...': 'lade Bild...', 'Archive: {name}': 'Archiv: {name}',
 }
 
 

@@ -248,6 +248,9 @@ GitHub fuer die Datei fuehrt (git-Blob-SHA1); "update available" heisst,
 die Datei im Mods-Ordner hat einen anderen Hash als die auf GitHub.
 Doppelklick auf eine Zeile installiert ebenfalls.
 
+Auch hier oeffnet ein Klick die Seitenleiste mit Bild (gibt es eines im Archiv,
+sonst das Two-Worlds-Logo), Name und der Beschreibung aus der `.txt`.
+
 Die Mods dort stammen von verschiedenen Autoren; die Beschreibung sagt,
 was sie tun und ob sie sich mit anderen vertragen. Lesen, dann einlegen.
 ''', '''# Mods from the server
@@ -283,6 +286,9 @@ row). Install downloads the file from GitHub and checks it against the
 hash GitHub keeps for the file (git blob SHA-1); "update available" means
 the file in the Mods folder has a different hash than the one on GitHub.
 Double-clicking a row installs as well.
+
+Here too a click opens the side panel with a picture (if the archive has
+one, else the Two Worlds logo), the name and the description from the `.txt`.
 
 The mods there come from different authors; the description says what
 they do and whether they get along with others. Read, then install.

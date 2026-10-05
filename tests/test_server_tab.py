@@ -31,7 +31,8 @@ class ServerTab(unittest.TestCase):
         os.makedirs(cls.mods)
         web = os.path.join(cls.tmp, 'web')
         os.makedirs(web)
-        cls.blobs = {'a_en.wd': b'EN-archive' * 50, 'a_de.wd': b'DE-archive' * 60, 'old.wd': b'old' * 40}
+        cls.blobs = {'a_en.wd': b'EN-archive' * 50, 'a_de.wd': b'DE-archive' * 60, 'old.wd': b'old' * 40,
+                     'desc.txt': b'Community description line 1' + bytes([10]) + b'line 2'}
         for n, b in cls.blobs.items():
             open(os.path.join(web, n), 'wb').write(b)
         for n, col in (('p1.png', (200, 40, 40)), ('p2.png', (40, 200, 40)), ('p3.png', (40, 40, 200))):
@@ -211,6 +212,31 @@ class ServerTab(unittest.TestCase):
             self.assertEqual(M.mod_text(self.catalog['mods'][0], 'description'), 'plain entry')
         finally:
             M._LANG = old
+
+    def test_9_sizes(self):
+        f = self.M.fmt_size
+        self.assertEqual(f(500), '500 B')
+        self.assertEqual(f(39921), '39 KB')
+        self.assertEqual(f(2466819), '2.4 MB')
+
+    def test_91_community_panel(self):
+        a = self.app
+        base = self.catalog['mods'][0]['url'].rsplit('/', 1)[0] + '/'
+        a.github = [{'name': 'Cool_Mod.wd', 'size': 1234, 'sha': 'x', 'url': base + 'old.wd',
+                     'txt_url': base + 'desc.txt', 'images': [base + 'p1.png']},
+                    {'name': 'Plain.WD', 'size': 99, 'sha': 'y', 'url': base + 'old.wd', 'txt_url': None, 'images': []}]
+        a._refresh_github_states()
+        a.root.update()
+        a.gtree.selection_set('Cool_Mod.wd')
+        sp = a.gside
+        self.assertTrue(self.pump(lambda: 'line 2' in sp.lbl_desc['text']), 'description streamed from the .txt')
+        self.assertEqual(sp.lbl_name['text'], 'Cool_Mod')
+        self.assertIn('InsideTwoWorlds', sp.lbl_credits['text'])
+        self.assertTrue(self.pump(lambda: bool(sp.pic['image'])), 'repo picture shown')
+        a.gtree.selection_set('Plain.WD')
+        a.root.update()
+        self.assertEqual(sp.lbl_name['text'], 'Plain')
+        self.assertIn('no description', sp.lbl_desc['text'])
 
 
 if __name__ == '__main__':
