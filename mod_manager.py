@@ -459,6 +459,220 @@ GUIDE_STEPS = [
 ]
 
 
+# Shown in the gallery when a mod has no pictures: the Two Worlds logo from Steam's CDN,
+# streamed at run time (nothing is stored in the tool or in the repo).
+LOGO_URL = 'https://cdn.cloudflare.steamstatic.com/steam/apps/1930/logo.png'
+LANG_NAMES = {'en': 'English', 'de': 'Deutsch'}
+
+
+def lang_name(code):
+    return LANG_NAMES.get(code, code or '')
+
+
+def mod_variants(mod):
+    """Language variants of a server entry: [{lang, file, url, size, sha256}].
+    Entries without "variants" (the old format) count as one variant."""
+    vs = [v for v in mod.get('variants') or [] if v.get('file') and v.get('url')]
+    if vs:
+        return vs
+    return [{'lang': '', 'file': mod.get('file', ''), 'url': mod.get('url', ''),
+             'size': mod.get('size', 0), 'sha256': mod.get('sha256', '')}]
+
+
+def mod_text(mod, field):
+    """Text field in the tool language: <field>_de / <field>_en, else <field>."""
+    return mod.get(f'{field}_{_LANG}') or mod.get(field) or ''
+
+
+def mod_list(value):
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [t.strip() for t in re.split(r'[\r\n,]+', value) if t.strip()]
+    return [str(t).strip() for t in value if str(t).strip()]
+
+
+try:
+    from PIL import Image, ImageTk                      # noqa: E402
+except Exception:                                       # pictures then only as PNG/GIF
+    Image = ImageTk = None
+
+
+class ModSidePanel:
+    """Right-hand panel of the server tab: picture gallery with arrows, mod name,
+    description, collapsible readme, tags and credits (every part optional)."""
+    W = 330
+    PIC_H = 200
+
+    def __init__(self, app, parent):
+        self.app = app
+        self.mod = None
+        self.images = []
+        self.idx = 0
+        self.cache = {}
+        self.outer = ttk.Frame(parent, width=self.W + 22)
+        self.outer.pack(side='right', fill='y', padx=(12, 0))
+        self.outer.pack_propagate(False)
+        self.canvas = tk.Canvas(self.outer, bg=theme.BG, highlightthickness=0, width=self.W)
+        bar = ttk.Scrollbar(self.outer, orient='vertical', command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side='right', fill='y')
+        self.canvas.pack(side='left', fill='both', expand=True)
+        self.body = ttk.Frame(self.canvas)
+        self.canvas.create_window((0, 0), window=self.body, anchor='nw', width=self.W)
+        self.body.bind('<Configure>', lambda e: self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all('<MouseWheel>', self._wheel))
+        self.canvas.bind('<Leave>', lambda e: self.canvas.unbind_all('<MouseWheel>'))
+
+        self.pic_box = tk.Frame(self.body, bg=theme.CANVAS_BG, width=self.W, height=self.PIC_H)
+        self.pic_box.pack(fill='x')
+        self.pic_box.pack_propagate(False)
+        self.pic = tk.Label(self.pic_box, bg=theme.CANVAS_BG, fg=theme.MUT, font=theme.FONT)
+        self.pic.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.btn_prev = tk.Button(self.pic_box, text='\u25c0', command=lambda: self.step(-1), bd=0, bg=theme.PANEL,
+                                  fg=theme.GOLD, activebackground=theme.SEL, activeforeground=theme.GOLD_HI, width=2)
+        self.btn_next = tk.Button(self.pic_box, text='\u25b6', command=lambda: self.step(1), bd=0, bg=theme.PANEL,
+                                  fg=theme.GOLD, activebackground=theme.SEL, activeforeground=theme.GOLD_HI, width=2)
+        self.lbl_count = tk.Label(self.pic_box, bg=theme.PANEL, fg=theme.MUT, font=theme.FONT_SMALL)
+
+        self.lbl_name = ttk.Label(self.body, style='Brand.TLabel', wraplength=self.W - 8, justify='left')
+        self.lbl_name.pack(anchor='w', pady=(10, 0))
+        self.lbl_meta = ttk.Label(self.body, style='Muted.TLabel', wraplength=self.W - 8, justify='left')
+        self.lbl_meta.pack(anchor='w')
+        self.lbl_desc = ttk.Label(self.body, wraplength=self.W - 8, justify='left')
+        self.lbl_desc.pack(anchor='w', pady=(8, 0))
+        self.btn_readme = ttk.Button(self.body, command=self._toggle_readme)
+        self.txt_readme = tk.Text(self.body, height=14, wrap='word', bg=theme.FIELD, fg=theme.INK, relief='flat',
+                                  font=theme.FONT_SMALL, padx=6, pady=4, highlightthickness=1,
+                                  highlightbackground=theme.LINE, insertbackground=theme.INK)
+        self.txt_readme.bind('<MouseWheel>', self._readme_wheel)
+        self.readme_open = False
+        self.lbl_tags = ttk.Label(self.body, foreground=theme.GOLD, wraplength=self.W - 8, justify='left')
+        self.lbl_credits_h = ttk.Label(self.body, text=tr('Credits'), foreground=theme.GOLD, font=theme.FONT_BOLD)
+        self.lbl_credits = ttk.Label(self.body, style='Muted.TLabel', wraplength=self.W - 8, justify='left')
+        self.show(None)
+
+    def _wheel(self, ev):
+        self.canvas.yview_scroll(-1 * (ev.delta // 120), 'units')
+
+    def _readme_wheel(self, ev):
+        self.txt_readme.yview_scroll(-1 * (ev.delta // 120) * 3, 'units')
+        return 'break'
+
+    def _toggle_readme(self):
+        self.readme_open = not self.readme_open
+        self._layout_readme()
+
+    def _layout_readme(self):
+        self.btn_readme.configure(text=('\u25be ' if self.readme_open else '\u25b8 ') + tr('Readme'))
+        if self.readme_open:
+            self.txt_readme.pack(fill='x', pady=(4, 0), after=self.btn_readme)
+        else:
+            self.txt_readme.pack_forget()
+
+    def show(self, mod):
+        if mod is not None and mod is self.mod:      # same selection again: keep picture and readme state
+            return
+        self.mod = mod
+        self.canvas.yview_moveto(0)
+        for w in (self.btn_readme, self.txt_readme, self.lbl_tags, self.lbl_credits_h, self.lbl_credits):
+            w.pack_forget()
+        if mod is None:
+            self.images = []
+            self._show_image()
+            self.lbl_name.configure(text=tr('Select a mod'))
+            self.lbl_meta.configure(text='')
+            self.lbl_desc.configure(text='')
+            return
+        self.images = mod_list(mod.get('images'))
+        self.idx = 0
+        self._show_image()
+        self.lbl_name.configure(text=mod.get('name', ''))
+        meta = [x for x in ('v' + str(mod['version']) if mod.get('version') else '', mod.get('author', '')) if x]
+        self.lbl_meta.configure(text='  \u00b7  '.join(meta))
+        self.lbl_desc.configure(text=mod_text(mod, 'description'))
+        readme = mod_text(mod, 'readme').strip()
+        if readme:
+            self.btn_readme.pack(anchor='w', pady=(10, 0))
+            self.txt_readme.configure(state='normal')
+            self.txt_readme.delete('1.0', 'end')
+            self.txt_readme.insert('1.0', readme)
+            self.txt_readme.configure(state='disabled')
+            self.readme_open = False
+            self._layout_readme()
+        tags = mod_list(mod.get('tags'))
+        if tags:
+            self.lbl_tags.configure(text='   '.join('#' + t for t in tags))
+            self.lbl_tags.pack(anchor='w', pady=(10, 0))
+        credits = mod_list(mod.get('credits'))
+        if credits:
+            self.lbl_credits.configure(text='\n'.join(credits))
+            self.lbl_credits_h.pack(anchor='w', pady=(10, 0))
+            self.lbl_credits.pack(anchor='w')
+
+    # ---- gallery ----
+    def step(self, d):
+        if self.images:
+            self.idx = (self.idx + d) % len(self.images)
+            self._show_image()
+
+    def _show_image(self):
+        many = len(self.images) > 1
+        for w, x in ((self.btn_prev, 0.0), (self.btn_next, 1.0)):
+            if many:
+                w.place(relx=x, rely=0.5, anchor='w' if x == 0 else 'e')
+            else:
+                w.place_forget()
+        if many:
+            self.lbl_count.configure(text=f'{self.idx + 1} / {len(self.images)}')
+            self.lbl_count.place(relx=0.5, rely=1.0, anchor='s')
+        else:
+            self.lbl_count.place_forget()
+        empty = not self.images
+        url = LOGO_URL if empty else self.images[self.idx]
+        gone = tr('No pictures for this mod yet.') if empty else tr('(picture not available)')
+        if url in self.cache:
+            img = self.cache[url]
+            if img is None:
+                self.pic.configure(image='', text=gone)
+            else:
+                self.pic.configure(image=img, text='')
+                self.pic.image = img
+            return
+        self.pic.configure(image='', text=gone if empty else tr('loading picture...'))
+        box = (self.W - 80, self.PIC_H - 60) if empty else (self.W, self.PIC_H)
+
+        def work():
+            try:
+                import urllib.parse
+                import io
+                data = http_get(urllib.parse.urljoin(MODS_URL, url))
+                if Image is not None:
+                    im = Image.open(io.BytesIO(data))
+                    im.thumbnail(box)
+                    raw = ('pil', im.convert('RGBA'))
+                else:
+                    raw = ('png', data)
+            except Exception:
+                raw = None
+
+            def done():
+                try:
+                    if raw is None:
+                        self.cache[url] = None
+                    elif raw[0] == 'pil':
+                        self.cache[url] = ImageTk.PhotoImage(raw[1])
+                    else:
+                        import base64
+                        self.cache[url] = tk.PhotoImage(data=base64.b64encode(raw[1]))
+                except Exception:
+                    self.cache[url] = None
+                if (LOGO_URL if not self.images else self.images[self.idx]) == url:
+                    self._show_image()
+            self.app.root.after(0, done)
+        threading.Thread(target=work, daemon=True).start()
+
+
 class Guide:
     def __init__(self, app):
         self.app, self.i, self.frames, self.win = app, 0, [], None
@@ -997,31 +1211,38 @@ class App:
         hdr.pack(fill='x', pady=(0, 4))
         ttk.Label(hdr, text=tr('Verified mods from alchemy-fox.de'), style='Muted.TLabel').pack(side='left')
         help_mark(hdr, tr('mods.json from the community server: name, version, SHA-256. Install downloads, verifies and enables.'), 'server', self)
-        self.stree = ttk.Treeview(tab, columns=('ver', 'size', 'status'), show='tree headings')
+        self.side = ModSidePanel(self, tab)
+        left = ttk.Frame(tab)
+        left.pack(side='left', fill='both', expand=True)
+        self.stree = ttk.Treeview(left, columns=('ver', 'size', 'status'), show='tree headings')
         self.stree.heading('#0', text=tr('Mod'))
         self.stree.heading('ver', text=tr('Version'))
         self.stree.heading('size', text=tr('Size'))
         self.stree.heading('status', text=tr('On this PC'))
-        self.stree.column('#0', width=300)
-        self.stree.column('ver', width=70, anchor='center')
-        self.stree.column('size', width=90, anchor='e')
-        self.stree.column('status', width=160, anchor='center')
+        self.stree.column('#0', width=240)
+        self.stree.column('ver', width=60, anchor='center')
+        self.stree.column('size', width=80, anchor='e')
+        self.stree.column('status', width=150, anchor='center')
         self.stree.pack(fill='both', expand=True)
         self.stree.tag_configure('on', foreground=theme.OK)
         self.stree.tag_configure('get', foreground=theme.GOLD)
         self.stree.tag_configure('off', foreground=theme.MUT)
-        self.lbl_desc = ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left')
-        self.lbl_desc.pack(anchor='w', pady=(8, 0))
+        self.stree.tag_configure('head', foreground=theme.GOLD_HI)
         self.stree.bind('<<TreeviewSelect>>', lambda ev: self._show_desc())
-        btns = ttk.Frame(tab)
+        btns = ttk.Frame(left)
         btns.pack(fill='x', pady=(10, 0))
         self.btn_install = ttk.Button(btns, text=tr('Install / update'), style='Accent.TButton',
                                       command=self.install_server_mod)
         self.btn_install.pack(side='left')
+        self.lang_box = ttk.Frame(btns)
+        self.lang_box.pack(side='left')
+        self.lbl_lang = ttk.Label(self.lang_box, text=tr('Language'), style='Muted.TLabel')
+        self.cmb_lang = ttk.Combobox(self.lang_box, state='readonly', width=12)
+        self._lang_variants = []
         ttk.Button(btns, text=tr('Reload list'),
                    command=lambda: threading.Thread(target=self._fetch_catalog, daemon=True).start()
                    ).pack(side='left', padx=6)
-        ttk.Label(tab, style='Muted.TLabel', wraplength=860, justify='left',
+        ttk.Label(left, style='Muted.TLabel', wraplength=520, justify='left',
                   text=tr('Downloads are checksum-verified; existing archives get a .backup copy before an update.')
                   ).pack(anchor='w', pady=(8, 0))
         return tab
@@ -1333,55 +1554,101 @@ class App:
         self.status(tr('Mod list loaded - {n} mod(s).').format(n=len(self.catalog.get('mods', []))))
         self.root.after(0, self._refresh_server_states)
 
+    def _mod_state(self, mod, reg):
+        found = None
+        for v in mod_variants(mod):
+            local = os.path.join(self.mods_dir, v['file'])
+            if os.path.exists(local):
+                found = (v, local)
+                if v.get('lang') == _LANG:
+                    break
+        if found is None:
+            return tr('not installed'), 'get', None
+        v, local = found
+        if v.get('sha256') and sha256_of(local) != v['sha256']:
+            state, tag = tr('update available'), 'get'
+        elif reg.get(v['file'], 0):
+            state, tag = tr('installed · enabled'), 'on'
+        else:
+            state, tag = tr('installed · disabled'), 'off'
+        if len(mod_variants(mod)) > 1:
+            state += f' ({lang_name(v.get("lang"))})'
+        return state, tag, v
+
     def _refresh_server_states(self):
         if self.catalog is None or not hasattr(self, 'stree'):
             return
+        keep = self.stree.selection()
         self.stree.delete(*self.stree.get_children())
         reg = registry_mods()
-        for mod in self.catalog.get('mods', []):
-            local = os.path.join(self.mods_dir, mod['file'])
-            if not os.path.exists(local):
-                state, tag = tr('not installed'), 'get'
-            elif mod.get('sha256') and sha256_of(local) != mod['sha256']:
-                state, tag = tr('update available'), 'get'
-            elif reg.get(mod['file'], 0):
-                state, tag = tr('installed · enabled'), 'on'
-            else:
-                state, tag = tr('installed · disabled'), 'off'
-            self.stree.insert('', 'end', iid=mod['id'], text=mod['name'],
-                              values=(mod.get('version', ''), fmt_size(mod.get('size', 0)), state), tags=(tag,))
+        mods = self.catalog.get('mods', [])
+        merged = [m for m in mods if m.get('group') == 'merged']
+        for mod in [m for m in mods if m.get('group') != 'merged'] + merged:
+            if mod in merged and not self.stree.exists('_merged'):
+                self.stree.insert('', 'end', iid='_merged', text=tr('Merged mods'), open=True, tags=('head',))
+            state, tag, v = self._mod_state(mod, reg)
+            vs = mod_variants(mod)
+            size = (v or vs[0]).get('size') or mod.get('size', 0)
+            self.stree.insert('_merged' if mod in merged else '', 'end', iid=mod['id'], text=mod['name'],
+                              values=(mod.get('version', ''), fmt_size(size), state), tags=(tag,))
+        if keep and self.stree.exists(keep[0]):
+            self.stree.selection_set(keep[0])
+        else:
+            self._show_desc()
+
+    def _selected_mod(self):
+        sel = self.stree.selection()
+        if not sel or self.catalog is None:
+            return None
+        return next((m for m in self.catalog.get('mods', []) if m['id'] == sel[0]), None)
 
     def _show_desc(self):
-        sel = self.stree.selection()
-        if not sel or self.catalog is None:
+        mod = self._selected_mod()
+        self.side.show(mod)
+        self.lbl_lang.pack_forget()
+        self.cmb_lang.pack_forget()
+        self._lang_variants = []
+        vs = mod_variants(mod) if mod else []
+        if len(vs) < 2:
             return
-        mod = next((m for m in self.catalog['mods'] if m['id'] == sel[0]), None)
-        if mod:
-            author = f'  —  {mod["author"]}' if mod.get('author') else ''
-            self.lbl_desc.configure(text=mod.get('description', '') + author)
+        self._lang_variants = vs
+        self.cmb_lang.configure(values=[lang_name(v.get('lang')) for v in vs])
+        installed = next((v for v in vs if os.path.exists(os.path.join(self.mods_dir, v['file']))), None)
+        want = installed or next((v for v in vs if v.get('lang') == _LANG), vs[0])
+        self.cmb_lang.current(vs.index(want))
+        self.lbl_lang.pack(side='left', padx=(14, 4))
+        self.cmb_lang.pack(side='left')
+
+    def _chosen_variant(self, mod):
+        vs = mod_variants(mod)
+        if len(vs) > 1 and self._lang_variants == vs and self.cmb_lang.current() >= 0:
+            return vs[self.cmb_lang.current()]
+        return vs[0]
 
     def install_server_mod(self):
-        sel = self.stree.selection()
-        if not sel or self.catalog is None:
-            return
-        mod = next((m for m in self.catalog['mods'] if m['id'] == sel[0]), None)
+        mod = self._selected_mod()
         if mod is None:
             return
         if game_running():
             self.error('game.running', 'Two Worlds is running', tr('Close Two Worlds first - it reads the mod list only at start.'))
             return
         self.btn_install.state(['disabled'])
-        threading.Thread(target=self._download, args=(mod,), daemon=True).start()
+        threading.Thread(target=self._download, args=(mod, self._chosen_variant(mod)), daemon=True).start()
 
-    def _download(self, mod):
+    def _download(self, mod, v):
         try:
-            dest = os.path.join(self.mods_dir, mod['file'])
-            self.status(tr('Downloading {name}...').format(name=mod['name']))
-            download_file(mod['url'], dest, mod.get('size') or 0, sha256=mod.get('sha256'),
+            name = mod['name'] + (f' ({lang_name(v["lang"])})' if len(mod_variants(mod)) > 1 else '')
+            dest = os.path.join(self.mods_dir, v['file'])
+            self.status(tr('Downloading {name}...').format(name=name))
+            download_file(v['url'], dest, v.get('size') or 0, sha256=v.get('sha256'),
                           progress=lambda d, t: self.status(tr('Downloading {name}... {p}%').format(
-                              name=mod['name'], p=d * 100 // t if t else 0)))
-            registry_set(mod['file'], 1)
-            self.status(tr('{name} installed and enabled.').format(name=mod['name']))
+                              name=name, p=d * 100 // t if t else 0)))
+            registry_set(v['file'], 1)
+            # the language variants replace the same game files: switch the other ones off
+            for o in mod_variants(mod):
+                if o['file'] != v['file'] and os.path.exists(os.path.join(self.mods_dir, o['file'])):
+                    registry_set(o['file'], 0)
+            self.status(tr('{name} installed and enabled.').format(name=name))
         except Exception as exc:
             self.status(tr('Install failed: {e}').format(e=exc), error=True)
         finally:
@@ -1946,6 +2213,9 @@ DE = {
         'Dieses Release hat keine Pruefsumme. Ohne Pruefsumme installiert das Tool nichts; Jetzt aktualisieren oeffnet die Release-Seite.',
     'Installs, enables and disables mods of Two Worlds 1 - the .wd archives in\nthe Mods folder and their switches in the registry. Nothing is ever deleted.\nRegistry logic after buglord\'s Mod Selector.':
         'Legt Mods von Two Worlds 1 ein, schaltet sie ein und aus - die .wd-Archive im\nMods-Ordner und ihre Schalter in der Registry. Nichts wird je geloescht.\nRegistry-Logik nach buglords Mod Selector.',
+    'Merged mods': 'Zusammengefuehrte Mods', 'Readme': 'Readme', 'Credits': 'Credits', 'Select a mod': 'Mod auswaehlen',
+    'No pictures for this mod yet.': 'Noch keine Bilder zu dieser Mod.', '(picture not available)': '(Bild nicht erreichbar)',
+    'loading picture...': 'lade Bild...',
 }
 
 

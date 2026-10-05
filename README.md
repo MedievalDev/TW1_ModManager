@@ -81,6 +81,18 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.3.0 (05.10.2026)
+
+- **Side panel in "My Mods (server)".** Click a mod: picture gallery with
+  arrows, name, description, the readme to unfold, tags and credits.
+- **Language variants.** One entry can carry several language files; a
+  language box next to "Install / update" picks one (default: the tool
+  language). The other version is switched off, it replaces the same files.
+- **Merged mods group.** Mods that bundle other mods (with their credits)
+  get their own section in the list.
+- `mods.json` stays readable for older versions: entries without
+  `variants` work as before.
+
 ### v2.2.2 (22.09.2026)
 
 - **No overlap limit in the merger.** Before, more than 40 overlaps turned a

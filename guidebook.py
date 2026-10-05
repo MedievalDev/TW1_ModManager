@@ -224,6 +224,14 @@ Version, Groesse, SHA-256 und Download-Adresse jeder gepruefen Mod.
   Pruefsumme als die auf dem Server.
 - **installed · enabled / disabled:** liegt hier, Schalter wie gezeigt.
 
+Ein Klick auf eine Mod oeffnet rechts die Seitenleiste: Bilder mit Pfeilen
+zum Durchschalten, Name, Beschreibung, die Readme zum Aufklappen, Tags und
+Credits (alles, was die Mod mitbringt). Mods in der Gruppe "Merged mods"
+enthalten mehrere andere Mods in einer Datei; ihre Credits nennen die Urheber.
+Gibt es eine Mod in mehreren Sprachen, steht unten neben "Install / update"
+eine Sprachauswahl (Vorgabe: die Sprache des Tools). Beim Wechsel der Sprache
+wird die andere Fassung ausgeschaltet, weil beide dieselben Spieldateien ersetzen.
+
 "Install / update" laedt nach `Mods\\<Datei>.download`, prueft die
 SHA-256, legt bei Ersatz ein `.backup` an und schaltet ein. Stimmt die
 Pruefsumme nicht, wird der Download verworfen und nichts geaendert.
@@ -251,6 +259,14 @@ version, size, SHA-256 and download address of every verified mod.
 - **update available:** the file in the Mods folder has a different
   checksum than the one on the server.
 - **installed · enabled / disabled:** present here, switch as shown.
+
+Clicking a mod opens the side panel on the right: pictures with arrows to
+page through, name, description, the readme (click to unfold), tags and
+credits (whatever the mod brings along). Mods in the "Merged mods" group
+contain several other mods in one file; their credits name the authors.
+If a mod exists in several languages, a language box sits next to
+"Install / update" (default: the tool language). Switching the language
+turns the other version off, because both replace the same game files.
 
 "Install / update" downloads to `Mods\\<file>.download`, verifies the
 SHA-256, keeps a `.backup` when replacing and enables the mod. If the
