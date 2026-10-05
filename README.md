@@ -81,6 +81,22 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.4.0 (05.10.2026)
+
+- **Search row in all three list tabs** (Installed mods, My Mods, Community):
+  live filter while you type, suggestions under the entry (arrow keys, Enter
+  or Tab to take one, Esc to close), Ctrl+F jumps into the row. On the
+  server tab the search also reads description, author and tags, on the
+  community tab the descriptions (loaded in the background).
+- **Texts in the side panel can be selected and copied** (Ctrl+C or
+  right-click), **web links are clickable**.
+- **Install button and language switch in the side panel**, under the
+  picture (slimmer buttons). Mods with two language files get a DE / EN
+  switch that also changes description and readme.
+- **My Mods sorted by name; merged mods sit under the mod they build on**
+  (unfold SpellRework to see "Spell Elite Revamp (merged mod)").
+- **Window 25 % higher** (825 px) so the lists read better.
+
 ### v2.3.1 (05.10.2026)
 
 - **Sizes under 1 MB show in KB** (before: "0.0 MB" for a 40 KB mod).

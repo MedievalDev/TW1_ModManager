@@ -226,11 +226,13 @@ Version, Groesse, SHA-256 und Download-Adresse jeder gepruefen Mod.
 
 Ein Klick auf eine Mod oeffnet rechts die Seitenleiste: Bilder mit Pfeilen
 zum Durchschalten, Name, Beschreibung, die Readme zum Aufklappen, Tags und
-Credits (alles, was die Mod mitbringt). Mods in der Gruppe "Merged mods"
-enthalten mehrere andere Mods in einer Datei; ihre Credits nennen die Urheber.
-Gibt es eine Mod in mehreren Sprachen, steht unten neben "Install / update"
-eine Sprachauswahl (Vorgabe: die Sprache des Tools). Beim Wechsel der Sprache
-wird die andere Fassung ausgeschaltet, weil beide dieselben Spieldateien ersetzen.
+Credits (alles, was die Mod mitbringt). Merged mods (mehrere andere Mods in einer Datei) stehen aufklappbar unter der Mod,
+auf der sie aufbauen, mit dem Zusatz "(merged mod)"; ihre Credits nennen die Urheber.
+Der Knopf "Install / update" sitzt in der Seitenleiste unter dem Bild. Gibt es
+eine Mod in mehreren Sprachen, steht rechts daneben ein Schalter DE / EN
+(Vorgabe: die Sprache des Tools); er schaltet auch Beschreibung und Readme um.
+Beim Wechsel der Sprache wird die andere Fassung ausgeschaltet, weil beide
+dieselben Spieldateien ersetzen.
 
 "Install / update" laedt nach `Mods\\<Datei>.download`, prueft die
 SHA-256, legt bei Ersatz ein `.backup` an und schaltet ein. Stimmt die
@@ -251,6 +253,14 @@ Doppelklick auf eine Zeile installiert ebenfalls.
 Auch hier oeffnet ein Klick die Seitenleiste mit Bild (gibt es eines im Archiv,
 sonst das Two-Worlds-Logo), Name und der Beschreibung aus der `.txt`.
 
+Ganz oben hat jeder der drei Reiter eine Suchzeile (Strg+F springt hinein).
+Beim Tippen zeigt die Liste nur noch, was passt: auf dem Server auch Woerter aus
+Beschreibung, Autor und Tags, im Community-Reiter Woerter aus der Beschreibung.
+Darunter erscheinen Vorschlaege: Pfeil runter, Enter oder Tab uebernimmt einen,
+Esc schließt die Liste und loescht beim zweiten Mal die Suche.
+Texte in der Seitenleiste lassen sich markieren und kopieren (Strg+C oder
+Rechtsklick), Web-Links darin sind anklickbar.
+
 Die Mods dort stammen von verschiedenen Autoren; die Beschreibung sagt,
 was sie tun und ob sie sich mit anderen vertragen. Lesen, dann einlegen.
 ''', '''# Mods from the server
@@ -265,11 +275,13 @@ version, size, SHA-256 and download address of every verified mod.
 
 Clicking a mod opens the side panel on the right: pictures with arrows to
 page through, name, description, the readme (click to unfold), tags and
-credits (whatever the mod brings along). Mods in the "Merged mods" group
-contain several other mods in one file; their credits name the authors.
-If a mod exists in several languages, a language box sits next to
-"Install / update" (default: the tool language). Switching the language
-turns the other version off, because both replace the same game files.
+credits (whatever the mod brings along). Merged mods (several other mods in one file) sit unfolded under the mod they
+build on, marked "(merged mod)"; their credits name the authors.
+The "Install / update" button sits in the side panel under the picture. If a
+mod exists in several languages, a DE / EN switch sits right next to it
+(default: the tool language); it also switches description and readme.
+Switching the language turns the other version off, because both replace
+the same game files.
 
 "Install / update" downloads to `Mods\\<file>.download`, verifies the
 SHA-256, keeps a `.backup` when replacing and enables the mod. If the
@@ -289,6 +301,13 @@ Double-clicking a row installs as well.
 
 Here too a click opens the side panel with a picture (if the archive has
 one, else the Two Worlds logo), the name and the description from the `.txt`.
+
+Every one of the three tabs has a search row at the top (Ctrl+F jumps into it).
+While you type the list shows only what matches: on the server tab also words from
+the description, author and tags, on the community tab words from the description.
+Suggestions appear below: arrow down, Enter or Tab takes one, Esc closes the
+list and clears the search the second time. Texts in the side panel can be
+selected and copied (Ctrl+C or right-click); web links in them are clickable.
 
 The mods there come from different authors; the description says what
 they do and whether they get along with others. Read, then install.

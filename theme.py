@@ -126,6 +126,8 @@ def apply_dark_theme(root):
               background=[('pressed', '#b88d3c'), ('active', GOLD_HI),
                           ('disabled', '#6d5b31')],
               foreground=[('disabled', '#3a3226')])
+    style.configure('Slim.Accent.TButton', padding=(10, 2))
+    style.configure('Slim.TButton', padding=(8, 1))
     style.configure('TNotebook', bordercolor=LINE, tabmargins=(8, 6, 8, 0))
     style.configure('TNotebook.Tab', background=PANEL, foreground=MUT,
                     padding=(16, 6), bordercolor=LINE)

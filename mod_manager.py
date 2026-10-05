@@ -483,9 +483,9 @@ def mod_variants(mod):
              'size': mod.get('size', 0), 'sha256': mod.get('sha256', '')}]
 
 
-def mod_text(mod, field):
-    """Text field in the tool language: <field>_de / <field>_en, else <field>."""
-    return mod.get(f'{field}_{_LANG}') or mod.get(field) or ''
+def mod_text(mod, field, lang=None):
+    """Text field in the tool language (or lang): <field>_de / <field>_en, else <field>."""
+    return mod.get(f'{field}_{lang or _LANG}') or mod.get(field) or ''
 
 
 def mod_list(value):
@@ -502,13 +502,289 @@ except Exception:                                       # pictures then only as 
     Image = ImageTk = None
 
 
+from tkinter import font as tkfont                      # noqa: E402
+
+URL_RE = re.compile(r'https?://[^\s<>"\']+')
+
+
+def split_links(text):
+    """[(piece, url or None)]; trailing punctuation stays out of the link."""
+    out, pos = [], 0
+    for m in URL_RE.finditer(text):
+        url = m.group(0)
+        while url and url[-1] in '.,;:!?)]}':
+            url = url[:-1]
+        if m.start() > pos:
+            out.append((text[pos:m.start()], None))
+        out.append((url, url))
+        pos = m.start() + len(url)
+    if pos < len(text):
+        out.append((text[pos:], None))
+    return out
+
+
+def read_only_text(parent, fg=None, font=None, bg=None):
+    """A Text that looks like a label but can be selected and copied (Ctrl+C, right-click)."""
+    w = tk.Text(parent, wrap='word', relief='flat', bd=0, highlightthickness=0, height=1,
+                bg=bg or theme.BG, fg=fg or theme.INK, font=font or theme.FONT, padx=0, pady=0,
+                insertwidth=0, selectbackground=theme.SEL, selectforeground=theme.INK,
+                inactiveselectbackground=theme.SEL, cursor='xterm')
+
+    def key(ev):
+        if ev.state & 0x4 and ev.keysym.lower() in ('c', 'insert'):
+            return None
+        return 'break'
+
+    def select_all(ev):
+        w.tag_add('sel', '1.0', 'end-1c')
+        return 'break'
+    w.bind('<Key>', key)
+    w.bind('<<Paste>>', lambda e: 'break')
+    w.bind('<<Cut>>', lambda e: 'break')
+    w.bind('<Control-a>', select_all)
+    w.bind('<Button-1>', lambda e: w.focus_set(), add='+')
+    menu = tk.Menu(w, tearoff=0, bg=theme.PANEL, fg=theme.INK, activebackground=theme.SEL,
+                   activeforeground=theme.GOLD_HI, bd=0)
+    menu.add_command(label=tr('Copy'), command=lambda: w.event_generate('<<Copy>>'))
+    menu.add_command(label=tr('Select all'), command=lambda: select_all(None))
+
+    def popup(ev):
+        w.focus_set()
+        menu.tk_popup(ev.x_root, ev.y_root)
+    w.bind('<Button-3>', popup)
+
+    return w
+
+
+def fill_text(w, text, px=None):
+    """Put text into a read_only_text with clickable links; px = wrap width in pixels to size the height."""
+    for tag in w.tag_names():
+        if tag.startswith('link'):
+            w.tag_delete(tag)
+    w.delete('1.0', 'end')
+    n = 0
+    for piece, url in split_links(text):
+        if not url:
+            w.insert('end', piece)
+            continue
+        tag = f'link{n}'
+        n += 1
+        w.insert('end', piece, (tag,))
+        w.tag_configure(tag, foreground=theme.PLAYER_COLOR, underline=True)
+        w.tag_bind(tag, '<Enter>', lambda e: w.configure(cursor='hand2'))
+        w.tag_bind(tag, '<Leave>', lambda e: w.configure(cursor='xterm'))
+        w.tag_bind(tag, '<ButtonRelease-1>', lambda e, u=url: None if w.tag_ranges('sel') else webbrowser.open(u))
+    if px:
+        f = tkfont.Font(font=w.cget('font'))
+        lines = 0
+        for para in text.split('\n'):
+            cur, count = 0, 1
+            for word in para.split(' '):
+                wpx = f.measure(word + ' ')
+                if cur and cur + wpx > px:
+                    count += 1
+                    cur = 0
+                cur += wpx
+                if wpx > px:
+                    count += int(wpx // px)
+                    cur = wpx % px
+            lines += count
+        w.configure(height=max(1, lines))
+
+
+class TreeFilter:
+    """Search row above a list: live filter (rows that do not match are detached) and a suggestion
+    list under the entry. rows = [(iid, parent, haystack, label)] in display order; a row with
+    label None is a group heading, shown while one of its children matches."""
+    MAX = 8
+
+    def __init__(self, app, parent, on_change=None):
+        self.app = app
+        self.tree = None
+        self.rows = []
+        self.on_change = on_change
+        self.var = tk.StringVar()
+        self._quiet = False
+        self.pop = self.box = None
+        self.frame = ttk.Frame(parent)
+        ttk.Label(self.frame, text=tr('Search'), style='Muted.TLabel').pack(side='left')
+        self.entry = ttk.Entry(self.frame, textvariable=self.var)
+        self.entry.pack(side='left', fill='x', expand=True, padx=6)
+        ttk.Button(self.frame, text='\u2715', width=3, command=self.clear).pack(side='left')
+        self.lbl = ttk.Label(self.frame, style='Muted.TLabel', width=12, anchor='e')
+        self.lbl.pack(side='left')
+        self.var.trace_add('write', lambda *a: self._typed())
+        self.entry.bind('<Down>', lambda e: self._move(1))
+        self.entry.bind('<Up>', lambda e: self._move(-1))
+        self.entry.bind('<Return>', self._accept)
+        self.entry.bind('<Tab>', self._tab)
+        self.entry.bind('<Escape>', self._escape)
+        self.entry.bind('<FocusOut>', lambda e: self.app.root.after(200, self.hide))
+
+    def focus(self):
+        self.entry.focus_set()
+        self.entry.select_range(0, 'end')
+
+    def set_rows(self, rows):
+        self.rows = rows
+        self.apply()
+
+    def release(self):
+        """Bring every row back (before the list is rebuilt)."""
+        if self.tree is None:
+            return
+        for iid, parent, hay, label in self.rows:
+            try:
+                self.tree.reattach(iid, parent, 'end')
+            except tk.TclError:
+                pass
+
+    def apply(self):
+        if self.tree is None:
+            return
+        words = self.var.get().lower().split()
+        ok = {iid: all(w in hay for w in words) for iid, parent, hay, label in self.rows if label is not None}
+        kids = {}
+        for iid, parent, hay, label in self.rows:
+            if parent:
+                kids.setdefault(parent, []).append(iid)
+        shown = 0
+        for iid, parent, hay, label in self.rows:
+            below = any(ok.get(k) for k in kids.get(iid, []))
+            if label is None:
+                show = below
+            else:
+                show = ok[iid] or below
+                shown += ok[iid]
+            try:
+                if show:
+                    self.tree.reattach(iid, parent, 'end')
+                    if words and below:
+                        self.tree.item(iid, open=True)
+                else:
+                    self.tree.detach(iid)
+            except tk.TclError:
+                pass
+        total = sum(1 for r in self.rows if r[3] is not None)
+        self.lbl.configure(text=(tr('No match') if not shown else f'{shown} / {total}') if words else '')
+        if self.on_change:
+            self.on_change()
+
+    def clear(self):
+        self.var.set('')
+        self.hide()
+
+    # ---- suggestions ----
+    def _typed(self):
+        if self._quiet:
+            return
+        self.apply()
+        self._suggest()
+
+    def _suggest(self):
+        q = self.var.get().strip().lower()
+        words = q.split()
+        hits = []
+        for iid, parent, hay, label in self.rows:
+            if label is None or not words:
+                continue
+            low = label.lower()
+            if low.startswith(q):
+                pri = 0
+            elif q in low:
+                pri = 1
+            elif all(w in hay for w in words):
+                pri = 2
+            else:
+                continue
+            hits.append((pri, low, label))
+        labels = [h[2] for h in sorted(hits)][:self.MAX]
+        if not labels or (len(labels) == 1 and labels[0].lower() == q):
+            self.hide()
+        else:
+            self._show(labels)
+
+    def _show(self, labels):
+        if self.pop is None:
+            self.pop = tk.Toplevel(self.app.root)
+            self.pop.withdraw()
+            self.pop.overrideredirect(True)
+            self.box = tk.Listbox(self.pop, activestyle='none', exportselection=False, bg=theme.FIELD, fg=theme.INK,
+                                  selectbackground=theme.SEL, selectforeground=theme.GOLD_HI, relief='flat', bd=0,
+                                  highlightthickness=1, highlightbackground=theme.LINE, font=theme.FONT)
+            self.box.pack(fill='both', expand=True)
+            self.box.bind('<ButtonRelease-1>', lambda e: self._choose(self.box.nearest(e.y)))
+        self.box.delete(0, 'end')
+        for label in labels:
+            self.box.insert('end', label)
+        self.box.configure(height=len(labels))
+        self.pop.update_idletasks()
+        x, y = self.entry.winfo_rootx(), self.entry.winfo_rooty() + self.entry.winfo_height()
+        self.pop.geometry(f'{self.entry.winfo_width()}x{self.box.winfo_reqheight()}+{x}+{y}')
+        self.pop.deiconify()
+        self.pop.lift()
+
+    def visible(self):
+        return self.pop is not None and bool(self.pop.winfo_viewable())
+
+    def hide(self):
+        if self.pop is not None:
+            try:
+                self.pop.withdraw()
+            except tk.TclError:
+                pass
+
+    def _move(self, d):
+        if not self.visible():
+            return None
+        cur = self.box.curselection()
+        last = self.box.size() - 1
+        idx = min(max(cur[0] + d, 0), last) if cur else (0 if d > 0 else last)
+        self.box.selection_clear(0, 'end')
+        self.box.selection_set(idx)
+        self.box.see(idx)
+        return 'break'
+
+    def _choose(self, idx):
+        if idx is None or idx < 0 or idx >= self.box.size():
+            return
+        self._quiet = True
+        self.var.set(self.box.get(idx))
+        self._quiet = False
+        self.entry.icursor('end')
+        self.hide()
+        self.apply()
+        self.entry.focus_set()
+
+    def _accept(self, ev):
+        if self.visible() and self.box.curselection():
+            self._choose(self.box.curselection()[0])
+            return 'break'
+        self.hide()
+        return None
+
+    def _tab(self, ev):
+        if self.visible():
+            self._choose(self.box.curselection()[0] if self.box.curselection() else 0)
+            return 'break'
+        return None
+
+    def _escape(self, ev):
+        if self.visible():
+            self.hide()
+        else:
+            self.clear()
+        return 'break'
+
+
 class ModSidePanel:
-    """Right-hand panel of the server tab: picture gallery with arrows, mod name,
-    description, collapsible readme, tags and credits (every part optional)."""
+    """Right-hand panel of the list tabs: picture gallery with arrows, mod name, description,
+    collapsible readme, tags and credits (every part optional). All texts can be selected and
+    copied, web links in them are clickable."""
     W = 330
     PIC_H = 200
 
-    def __init__(self, app, parent):
+    def __init__(self, app, parent, on_install=None):
         self.app = app
         self.mod = None
         self.images = []
@@ -539,22 +815,39 @@ class ModSidePanel:
                                   fg=theme.GOLD, activebackground=theme.SEL, activeforeground=theme.GOLD_HI, width=2)
         self.lbl_count = tk.Label(self.pic_box, bg=theme.PANEL, fg=theme.MUT, font=theme.FONT_SMALL)
 
-        self.lbl_name = ttk.Label(self.body, style='Brand.TLabel', wraplength=self.W - 8, justify='left')
-        self.lbl_name.pack(anchor='w', pady=(10, 0))
-        self.lbl_meta = ttk.Label(self.body, style='Muted.TLabel', wraplength=self.W - 8, justify='left')
-        self.lbl_meta.pack(anchor='w')
-        self.lbl_desc = ttk.Label(self.body, wraplength=self.W - 8, justify='left')
-        self.lbl_desc.pack(anchor='w', pady=(8, 0))
-        self.btn_readme = ttk.Button(self.body, command=self._toggle_readme)
-        self.txt_readme = tk.Text(self.body, height=14, wrap='word', bg=theme.FIELD, fg=theme.INK, relief='flat',
-                                  font=theme.FONT_SMALL, padx=6, pady=4, highlightthickness=1,
-                                  highlightbackground=theme.LINE, insertbackground=theme.INK)
+        self.act = ttk.Frame(self.body)                      # install button and language switch under the picture
+        self.act.pack(fill='x', pady=(8, 0))
+        self.btn_install = ttk.Button(self.act, text=tr('Install / update'), style='Slim.Accent.TButton',
+                                     command=on_install)
+        self.btn_install.pack(side='left')
+        self.lang_box = ttk.Frame(self.act)
+        self.lang_box.pack(side='left', padx=(12, 0))
+        self.lang_labels = {}
+        self.lang = None            # chosen variant language (None: the mod has one file only)
+        self.text_lang = None       # language of description and readme (None: the tool language)
+
+        self.lbl_name = read_only_text(self.body, fg=theme.GOLD, font=theme.FONT_BRAND)
+        self.lbl_name.pack(fill='x', pady=(10, 0))
+        self.lbl_meta = read_only_text(self.body, fg=theme.MUT)
+        self.lbl_meta.pack(fill='x')
+        self.lbl_desc = read_only_text(self.body)
+        self.lbl_desc.pack(fill='x', pady=(8, 0))
+        self.btn_readme = ttk.Button(self.body, command=self._toggle_readme, style='Slim.TButton')
+        self.txt_readme = read_only_text(self.body, font=theme.FONT_SMALL, bg=theme.FIELD)
+        self.txt_readme.configure(height=14, padx=6, pady=4, highlightthickness=1, highlightbackground=theme.LINE)
         self.txt_readme.bind('<MouseWheel>', self._readme_wheel)
         self.readme_open = False
-        self.lbl_tags = ttk.Label(self.body, foreground=theme.GOLD, wraplength=self.W - 8, justify='left')
+        self.lbl_tags = read_only_text(self.body, fg=theme.GOLD)
         self.lbl_credits_h = ttk.Label(self.body, text=tr('Credits'), foreground=theme.GOLD, font=theme.FONT_BOLD)
-        self.lbl_credits = ttk.Label(self.body, style='Muted.TLabel', wraplength=self.W - 8, justify='left')
+        self.lbl_credits = read_only_text(self.body, fg=theme.MUT)
         self.show(None)
+
+    @staticmethod
+    def text_of(w):
+        return w.get('1.0', 'end-1c')
+
+    def _put(self, w, text):
+        fill_text(w, text, self.W - 10)
 
     def _wheel(self, ev):
         self.canvas.yview_scroll(-1 * (ev.delta // 120), 'units')
@@ -578,41 +871,81 @@ class ModSidePanel:
         if mod is not None and mod is self.mod:      # same selection again: keep picture and readme state
             return
         self.mod = mod
+        self._clear_langs()
         self.canvas.yview_moveto(0)
         for w in (self.btn_readme, self.txt_readme, self.lbl_tags, self.lbl_credits_h, self.lbl_credits):
             w.pack_forget()
         if mod is None:
             self.images = []
             self._show_image()
-            self.lbl_name.configure(text=tr('Select a mod'))
-            self.lbl_meta.configure(text='')
-            self.lbl_desc.configure(text='')
+            self._put(self.lbl_name, tr('Select a mod'))
+            self._put(self.lbl_meta, '')
+            self._put(self.lbl_desc, '')
             return
         self.images = mod_list(mod.get('images'))
         self.idx = 0
         self._show_image()
-        self.lbl_name.configure(text=mod.get('name', ''))
+        self._render_texts()
+
+    def _clear_langs(self):
+        for w in self.lang_box.winfo_children():
+            w.destroy()
+        self.lang_labels = {}
+        self.lang = self.text_lang = None
+
+    def set_variants(self, codes, selected):
+        """DE | EN switch next to the install button (only for mods with several language files)."""
+        self._clear_langs()
+        if len(codes) > 1:
+            for i, code in enumerate(codes):
+                if i:
+                    ttk.Label(self.lang_box, text='\u00b7', style='Muted.TLabel').pack(side='left')
+                lbl = ttk.Label(self.lang_box, text=(code or '').upper(), padding=(4, 2), cursor='hand2')
+                lbl.pack(side='left')
+                lbl.bind('<Button-1>', lambda e, c=code: self.select_lang(c))
+                self.lang_labels[code] = lbl
+            self.lang = self.text_lang = selected
+        self._paint_langs()
+        if self.mod is not None:
+            self._render_texts(keep_open=True)
+
+    def _paint_langs(self):
+        for code, lbl in self.lang_labels.items():
+            on = code == self.lang
+            lbl.configure(foreground=theme.GOLD if on else theme.MUT, font=theme.FONT_BOLD if on else theme.FONT)
+
+    def select_lang(self, code):
+        if code in self.lang_labels:
+            self.lang = self.text_lang = code
+            self._paint_langs()
+            self._render_texts(keep_open=True)
+
+    def _render_texts(self, keep_open=False):
+        mod = self.mod
+        if mod is None:
+            return
+        for w in (self.btn_readme, self.txt_readme, self.lbl_tags, self.lbl_credits_h, self.lbl_credits):
+            w.pack_forget()
+        self._put(self.lbl_name, mod.get('name', ''))
         meta = [x for x in ('v' + str(mod['version']) if mod.get('version') else '', mod.get('author', '')) if x]
-        self.lbl_meta.configure(text='  \u00b7  '.join(meta))
-        self.lbl_desc.configure(text=mod_text(mod, 'description'))
-        readme = mod_text(mod, 'readme').strip()
+        self._put(self.lbl_meta, '  \u00b7  '.join(meta))
+        self._put(self.lbl_desc, mod_text(mod, 'description', self.text_lang))
+        readme = mod_text(mod, 'readme', self.text_lang).strip()
         if readme:
             self.btn_readme.pack(anchor='w', pady=(10, 0))
-            self.txt_readme.configure(state='normal')
-            self.txt_readme.delete('1.0', 'end')
-            self.txt_readme.insert('1.0', readme)
-            self.txt_readme.configure(state='disabled')
-            self.readme_open = False
+            fill_text(self.txt_readme, readme)
+            if not keep_open:
+                self.readme_open = False
             self._layout_readme()
         tags = mod_list(mod.get('tags'))
         if tags:
-            self.lbl_tags.configure(text='   '.join('#' + t for t in tags))
-            self.lbl_tags.pack(anchor='w', pady=(10, 0))
+            self._put(self.lbl_tags, '   '.join('#' + t for t in tags))
+            self.lbl_tags.pack(fill='x', pady=(10, 0))
         credits = mod_list(mod.get('credits'))
         if credits:
-            self.lbl_credits.configure(text='\n'.join(credits))
+            self._put(self.lbl_credits, '\n'.join(credits))
             self.lbl_credits_h.pack(anchor='w', pady=(10, 0))
-            self.lbl_credits.pack(anchor='w')
+            self.lbl_credits.pack(fill='x')
 
     # ---- gallery ----
     def step(self, d):
@@ -943,7 +1276,7 @@ class App:
         if self._carry.get('geometry'):
             self.root.geometry(self._carry['geometry'])
             return
-        w, h = 960, 660
+        w, h = 960, min(825, self.root.winfo_screenheight() - 90)
         self.root.update_idletasks()
         x = max(0, (self.root.winfo_screenwidth() - w) // 2)
         y = max(0, (self.root.winfo_screenheight() - h) // 2 - 30)
@@ -1085,6 +1418,8 @@ class App:
         import mergeui
         self.merge_tab = mergeui.MergeTab(self, self.notebook)
         self.notebook.add(self.merge_tab.frame, text='  ' + tr('Merge mods') + '  ')
+        self.notebook.bind('<<NotebookTabChanged>>', lambda e: self._hide_suggestions())
+        self.root.bind('<Configure>', lambda e: self._hide_suggestions() if e.widget is self.root else None, add='+')
 
     def build_menubar(self):
         bar = ttk.Frame(self.root, style='Menubar.TFrame')
@@ -1169,6 +1504,8 @@ class App:
         hdr.pack(fill='x', pady=(0, 4))
         ttk.Label(hdr, text=tr('Archives in the Mods folder'), style='Muted.TLabel').pack(side='left')
         help_mark(hdr, tr('One row per .wd with its registry switch. Double-click toggles. Red rows sit in the game folder and always load.'), 'switch', self)
+        self.flt_inst = TreeFilter(self, tab, on_change=lambda: self.tree is not None and self._colour_fit())
+        self.flt_inst.frame.pack(fill='x', pady=(0, 6))
         self.tree = ttk.Treeview(tab, columns=('state', 'size', 'date', 'fit'), show='tree headings')
         self.tree.heading('#0', text=tr('Mod archive'))
         self.tree.heading('state', text=tr('State'))
@@ -1181,6 +1518,7 @@ class App:
         self.tree.heading('fit', text=tr('With the selected mod'))
         self.tree.column('fit', width=170, anchor='center')
         self.tree.pack(fill='both', expand=True)
+        self.flt_inst.tree = self.tree
         import mergeui
         mergeui.configure_tags(self.tree)
         mergeui.RowTips(self.tree, self._row_tip)
@@ -1215,7 +1553,10 @@ class App:
         hdr.pack(fill='x', pady=(0, 4))
         ttk.Label(hdr, text=tr('Verified mods from alchemy-fox.de'), style='Muted.TLabel').pack(side='left')
         help_mark(hdr, tr('mods.json from the community server: name, version, SHA-256. Install downloads, verifies and enables.'), 'server', self)
-        self.side = ModSidePanel(self, tab)
+        self.flt_server = TreeFilter(self, tab)
+        self.flt_server.frame.pack(fill='x', pady=(0, 6))
+        self.side = ModSidePanel(self, tab, on_install=self.install_server_mod)
+        self.btn_install = self.side.btn_install
         left = ttk.Frame(tab)
         left.pack(side='left', fill='both', expand=True)
         self.stree = ttk.Treeview(left, columns=('ver', 'size', 'status'), show='tree headings')
@@ -1228,6 +1569,7 @@ class App:
         self.stree.column('size', width=80, anchor='e')
         self.stree.column('status', width=150, anchor='center')
         self.stree.pack(fill='both', expand=True)
+        self.flt_server.tree = self.stree
         self.stree.tag_configure('on', foreground=theme.OK)
         self.stree.tag_configure('get', foreground=theme.GOLD)
         self.stree.tag_configure('off', foreground=theme.MUT)
@@ -1235,14 +1577,6 @@ class App:
         self.stree.bind('<<TreeviewSelect>>', lambda ev: self._show_desc())
         btns = ttk.Frame(left)
         btns.pack(fill='x', pady=(10, 0))
-        self.btn_install = ttk.Button(btns, text=tr('Install / update'), style='Accent.TButton',
-                                      command=self.install_server_mod)
-        self.btn_install.pack(side='left')
-        self.lang_box = ttk.Frame(btns)
-        self.lang_box.pack(side='left')
-        self.lbl_lang = ttk.Label(self.lang_box, text=tr('Language'), style='Muted.TLabel')
-        self.cmb_lang = ttk.Combobox(self.lang_box, state='readonly', width=12)
-        self._lang_variants = []
         ttk.Button(btns, text=tr('Reload list'),
                    command=lambda: threading.Thread(target=self._fetch_catalog, daemon=True).start()
                    ).pack(side='left', padx=6)
@@ -1260,7 +1594,10 @@ class App:
         lnk = ttk.Label(hdr, text=GH_NAME, style='Link.TLabel', cursor='hand2')
         lnk.pack(side='right')
         lnk.bind('<Button-1>', lambda e: webbrowser.open(GH_PAGE))
-        self.gside = ModSidePanel(self, tab)
+        self.flt_gh = TreeFilter(self, tab)
+        self.flt_gh.frame.pack(fill='x', pady=(0, 6))
+        self.gside = ModSidePanel(self, tab, on_install=self.install_github_mod)
+        self.btn_ginstall = self.gside.btn_install
         left = ttk.Frame(tab)
         left.pack(side='left', fill='both', expand=True)
         self.gtree = ttk.Treeview(left, columns=('size', 'status'), show='tree headings')
@@ -1271,6 +1608,7 @@ class App:
         self.gtree.column('size', width=90, anchor='e')
         self.gtree.column('status', width=160, anchor='center')
         self.gtree.pack(fill='both', expand=True)
+        self.flt_gh.tree = self.gtree
         self.gtree.tag_configure('on', foreground=theme.OK)
         self.gtree.tag_configure('get', foreground=theme.GOLD)
         self.gtree.tag_configure('off', foreground=theme.MUT)
@@ -1278,9 +1616,6 @@ class App:
         self.gtree.bind('<Double-1>', lambda ev: self.install_github_mod())
         btns = ttk.Frame(left)
         btns.pack(fill='x', pady=(10, 0))
-        self.btn_ginstall = ttk.Button(btns, text=tr('Install / update'), style='Accent.TButton',
-                                       command=self.install_github_mod)
-        self.btn_ginstall.pack(side='left')
         ttk.Button(btns, text=tr('Reload list'),
                    command=lambda: threading.Thread(target=self._fetch_github, daemon=True).start()
                    ).pack(side='left', padx=6)
@@ -1294,7 +1629,21 @@ class App:
         r = self.root
         r.bind('<Control-o>', lambda e: self.add_mod())
         r.bind('<F5>', lambda e: self.refresh())
+        r.bind('<Control-f>', lambda e: self._focus_search())
         r.bind('<F1>', lambda e: self.show_guide())
+
+    def _filters(self):
+        return [self.flt_inst, self.flt_server, self.flt_gh]
+
+    def _hide_suggestions(self):
+        for f in self._filters():
+            f.hide()
+
+    def _focus_search(self):
+        i = self.notebook.index(self.notebook.select())
+        if i < 3:
+            self._filters()[i].focus()
+        return 'break'
 
     # ---- status / hints ----
     def status(self, text, error=False):
@@ -1357,6 +1706,7 @@ class App:
     def refresh(self):
         if not self.mods_dir:
             return
+        self.flt_inst.release()
         self.tree.delete(*self.tree.get_children())
         reg = registry_mods()
         files = {f for f in os.listdir(self.mods_dir) if f.lower().endswith('.wd')}
@@ -1378,6 +1728,8 @@ class App:
                              values=(tr('ALWAYS loads'), '', '', ''), tags=('warn',))
         self._row_tags = {iid: self.tree.item(iid, 'tags') for iid in self.tree.get_children()}
         self.insight.ensure([self._row_path(i) for i in self.tree.get_children()])
+        self.flt_inst.set_rows([(i, '', self.tree.item(i, 'text').lower(), self.tree.item(i, 'text'))
+                                for i in self.tree.get_children()])
         if hasattr(self, 'merge_tab'):
             self.merge_tab.refresh()
         self._refresh_server_states()
@@ -1584,20 +1936,48 @@ class App:
         if self.catalog is None or not hasattr(self, 'stree'):
             return
         keep = self.stree.selection()
+        self.flt_server.release()
         self.stree.delete(*self.stree.get_children())
         reg = registry_mods()
-        mods = self.catalog.get('mods', [])
-        merged = [m for m in mods if m.get('group') == 'merged']
-        for mod in [m for m in mods if m.get('group') != 'merged'] + merged:
-            if mod in merged and not self.stree.exists('_merged'):
-                self.stree.insert('', 'end', iid='_merged', text=tr('Merged mods'), open=True, tags=('head',))
+        mods = sorted(self.catalog.get('mods', []), key=lambda m: m.get('name', '').lower())
+        top = [m for m in mods if m.get('group') != 'merged']
+        topids = {m['id'] for m in top}
+        kids, orphans = {}, []
+        for m in mods:                      # a merged mod hangs under the mod it builds on ("base")
+            if m.get('group') == 'merged':
+                if m.get('base') in topids:
+                    kids.setdefault(m['base'], []).append(m)
+                else:
+                    orphans.append(m)
+        rows = []
+
+        def add(mod, parent):
             state, tag, v = self._mod_state(mod, reg)
             vs = mod_variants(mod)
             size = (v or vs[0]).get('size') or mod.get('size', 0)
-            self.stree.insert('_merged' if mod in merged else '', 'end', iid=mod['id'], text=mod['name'],
-                              values=(mod.get('version', ''), fmt_size(size), state), tags=(tag,))
+            merged = mod.get('group') == 'merged'
+            self.stree.insert(parent, 'end', iid=mod['id'],
+                              text=mod['name'] + (f' ({tr("merged mod")})' if merged else ''),
+                              values=(mod.get('version', ''), fmt_size(size), state), tags=(tag,), open=False)
+            hay = ' '.join([mod.get('name', ''), mod.get('description', ''), mod.get('description_de', ''),
+                            mod.get('author', ''), ' '.join(mod_list(mod.get('tags'))),
+                            ' '.join(x['file'] for x in vs), tr('merged mod') if merged else '']).lower()
+            rows.append((mod['id'], parent, hay, mod['name']))
+        for mod in top:
+            add(mod, '')
+            for k in kids.get(mod['id'], []):
+                add(k, mod['id'])
+        if orphans:
+            self.stree.insert('', 'end', iid='_merged', text=tr('Merged mods'), open=True, tags=('head',))
+            rows.append(('_merged', '', '', None))
+            for mod in orphans:
+                add(mod, '_merged')
+        self.flt_server.set_rows(rows)
         if keep and self.stree.exists(keep[0]):
-            self.stree.selection_set(keep[0])
+            try:
+                self.stree.selection_set(keep[0])
+            except tk.TclError:
+                self._show_desc()
         else:
             self._show_desc()
 
@@ -1610,24 +1990,16 @@ class App:
     def _show_desc(self):
         mod = self._selected_mod()
         self.side.show(mod)
-        self.lbl_lang.pack_forget()
-        self.cmb_lang.pack_forget()
-        self._lang_variants = []
         vs = mod_variants(mod) if mod else []
-        if len(vs) < 2:
-            return
-        self._lang_variants = vs
-        self.cmb_lang.configure(values=[lang_name(v.get('lang')) for v in vs])
-        installed = next((v for v in vs if os.path.exists(os.path.join(self.mods_dir, v['file']))), None)
-        want = installed or next((v for v in vs if v.get('lang') == _LANG), vs[0])
-        self.cmb_lang.current(vs.index(want))
-        self.lbl_lang.pack(side='left', padx=(14, 4))
-        self.cmb_lang.pack(side='left')
+        if len(vs) > 1:
+            installed = next((v for v in vs if os.path.exists(os.path.join(self.mods_dir, v['file']))), None)
+            want = installed or next((v for v in vs if v.get('lang') == _LANG), vs[0])
+            self.side.set_variants([v.get('lang') for v in vs], want.get('lang'))
 
     def _chosen_variant(self, mod):
         vs = mod_variants(mod)
-        if len(vs) > 1 and self._lang_variants == vs and self.cmb_lang.current() >= 0:
-            return vs[self.cmb_lang.current()]
+        if len(vs) > 1 and self.side.lang:
+            return next((v for v in vs if v.get('lang') == self.side.lang), vs[0])
         return vs[0]
 
     def install_server_mod(self):
@@ -1684,11 +2056,13 @@ class App:
             return
         self.status(tr('GitHub list loaded - {n} mod(s).').format(n=len(self.github)))
         self.root.after(0, self._refresh_github_states)
+        threading.Thread(target=self._prefetch_gh_desc, daemon=True).start()
 
     def _refresh_github_states(self):
         if self.github is None or not hasattr(self, 'gtree'):
             return
         sel = self.gtree.selection()
+        self.flt_gh.release()
         self.gtree.delete(*self.gtree.get_children())
         reg = registry_mods()
         for mod in self.github:
@@ -1703,8 +2077,36 @@ class App:
                 state, tag = tr('installed · disabled'), 'off'
             self.gtree.insert('', 'end', iid=mod['name'], text=mod['name'],
                               values=(fmt_size(mod['size']), state), tags=(tag,))
+        self._gh_search_rows()
         if sel and self.gtree.exists(sel[0]):
-            self.gtree.selection_set(sel[0])
+            try:
+                self.gtree.selection_set(sel[0])
+            except tk.TclError:
+                pass
+
+    def _gh_search_rows(self):
+        """Search rows of the community tab: file name plus the description once it has been loaded."""
+        rows = [(m['name'], '', (m['name'] + ' ' + self.gh_desc.get(m['name'], '')).lower(), m['name'])
+                for m in self.github or []]
+        self.flt_gh.set_rows(rows)
+
+    def _gh_text(self, mod):
+        text = http_get(mod['txt_url']).decode('utf-8', 'replace').replace('\r\n', '\n').replace('\r', '\n')
+        return re.sub(r'\n{3,}', '\n\n', text).strip()[:6000]
+
+    def _prefetch_gh_desc(self):
+        """Load all descriptions in the background so the search finds words inside them."""
+        for mod in list(self.github or []):
+            if mod['name'] in self.gh_desc or not mod.get('txt_url'):
+                continue
+            try:
+                self.gh_desc[mod['name']] = self._gh_text(mod)
+            except Exception:
+                continue
+        try:
+            self.root.after(0, self._gh_search_rows)
+        except Exception:
+            pass
 
     def _gh_panel(self, mod, text):
         self.gside.show({'id': mod['name'], 'name': re.sub(r'\.wd$', '', mod['name'], flags=re.I),
@@ -1730,11 +2132,10 @@ class App:
 
         def work():
             try:
-                text = http_get(mod['txt_url']).decode('utf-8', 'replace').replace('\r\n', '\n').replace('\r', '\n')
-                text = re.sub(r'\n{3,}', '\n\n', text).strip()
+                text = self._gh_text(mod)
             except Exception as exc:
                 text = tr('(description not available: {e})').format(e=exc)
-            self.gh_desc[name] = text[:6000]
+            self.gh_desc[name] = text
 
             def show():
                 cur = self.gtree.selection()
@@ -2231,6 +2632,7 @@ DE = {
         'Legt Mods von Two Worlds 1 ein, schaltet sie ein und aus - die .wd-Archive im\nMods-Ordner und ihre Schalter in der Registry. Nichts wird je geloescht.\nRegistry-Logik nach buglords Mod Selector.',
     'Merged mods': 'Zusammengefuehrte Mods', 'Readme': 'Readme', 'Credits': 'Credits', 'Select a mod': 'Mod auswaehlen',
     'No pictures for this mod yet.': 'Noch keine Bilder zu dieser Mod.', '(picture not available)': '(Bild nicht erreichbar)',
+    'Search': 'Suche', 'No match': 'Keine Treffer', 'Copy': 'Kopieren', 'Select all': 'Alles markieren',
     'loading picture...': 'lade Bild...', 'Archive: {name}': 'Archiv: {name}',
 }
 

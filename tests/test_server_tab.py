@@ -64,6 +64,8 @@ class ServerTab(unittest.TestCase):
              'file': 'a_en.wd', 'url': base + 'a_en.wd'},
             {'id': 'merged-one', 'name': 'Merged One', 'group': 'merged', 'version': '1.0',
              'variants': [var('en', 'a_en.wd')]},
+            {'id': 'child', 'name': 'Child Merge', 'group': 'merged', 'base': 'multi', 'version': '1.0',
+             'variants': [var('en', 'a_en.wd')]},
         ]}
 
         M.LOGO_URL = base + 'p2.png'             # stands in for the Steam logo
@@ -121,38 +123,48 @@ class ServerTab(unittest.TestCase):
 
     def test_1_groups(self):
         t = self.app.stree
-        self.assertEqual(t.parent('merged-one'), '_merged')
+        self.assertEqual(t.parent('merged-one'), '_merged')        # no base: collected under a heading
+        self.assertEqual(t.parent('child'), 'multi')               # with base: unfolds under its mod
         self.assertEqual(t.parent('multi'), '')
         self.assertEqual(t.parent('old-mod'), '')
         self.assertEqual(t.item('_merged', 'text'), 'Merged mods')
+        self.assertEqual(t.item('child', 'text'), 'Child Merge (merged mod)')
+        self.assertFalse(t.item('multi', 'open'))                  # folded until the user unfolds it
+        self.assertEqual(list(t.get_children('')), ['multi', 'old-mod', '_merged'])   # sorted by name
+
+    def test_11_window_is_taller(self):
+        src = open(self.M.__file__, encoding='utf-8').read()
+        self.assertIn('min(825, self.root.winfo_screenheight() - 90)', src)
 
     def test_2_language_box_only_with_variants(self):
         a = self.app
         self.select('old-mod')
-        self.assertEqual(a.cmb_lang.winfo_manager(), '')
+        self.assertEqual(a.side.lang_labels, {})
+        self.assertIsNone(a.side.lang)
         self.select('multi')
-        self.assertEqual(a.cmb_lang.winfo_manager(), 'pack')
-        self.assertEqual(list(a.cmb_lang['values']), ['English', 'Deutsch'])
-        self.assertEqual(a.cmb_lang.get(), 'English')          # tool language
+        self.assertEqual(list(a.side.lang_labels), ['en', 'de'])
+        self.assertEqual([w['text'] for w in a.side.lang_box.winfo_children() if w['text'] != '\u00b7'], ['EN', 'DE'])
+        self.assertEqual(a.side.lang, 'en')
+        self.assertEqual(a.side.btn_install.master, a.side.act)   # install button sits in the panel under the picture
 
     def test_3_side_panel_text(self):
         a, sp = self.app, self.app.side
         self.select('multi')
-        self.assertEqual(sp.lbl_name['text'], 'Multi Mod')
-        self.assertIn('Someone', sp.lbl_meta['text'])
-        self.assertEqual(sp.lbl_desc['text'], 'English text')
-        self.assertIn('#magic', sp.lbl_tags['text'])
-        self.assertIn('B did that', sp.lbl_credits['text'])
+        self.assertEqual(sp.text_of(sp.lbl_name), 'Multi Mod')
+        self.assertIn('Someone', sp.text_of(sp.lbl_meta))
+        self.assertEqual(sp.text_of(sp.lbl_desc), 'English text')
+        self.assertIn('#magic', sp.text_of(sp.lbl_tags))
+        self.assertIn('B did that', sp.text_of(sp.lbl_credits))
         self.assertEqual(sp.txt_readme.winfo_manager(), '')    # collapsed
         sp._toggle_readme()
         a.root.update()
         self.assertEqual(sp.txt_readme.winfo_manager(), 'pack')
-        self.assertEqual(sp.txt_readme.get('1.0', 'end').strip(), 'README EN')
+        self.assertEqual(sp.text_of(sp.txt_readme).strip(), 'README EN')
         self.select('old-mod')
         self.assertEqual(sp.btn_readme.winfo_manager(), '')    # no readme, no tags, no credits
         self.assertEqual(sp.lbl_tags.winfo_manager(), '')
         self.assertEqual(sp.lbl_credits.winfo_manager(), '')
-        self.assertEqual(sp.lbl_desc['text'], 'plain entry')
+        self.assertEqual(sp.text_of(sp.lbl_desc), 'plain entry')
 
     def test_4_gallery(self):
         a, sp = self.app, self.app.side
@@ -176,7 +188,8 @@ class ServerTab(unittest.TestCase):
     def test_5_install_chosen_language(self):
         a = self.app
         self.select('multi')
-        a.cmb_lang.current(1)                                   # Deutsch
+        a.side.select_lang('de')
+        self.assertEqual(a.side.text_of(a.side.lbl_desc), 'Deutscher Text')   # the switch changes the texts too
         a.install_server_mod()
         self.assertTrue(self.pump(lambda: os.path.exists(os.path.join(self.mods, 'a_de.wd'))), 'file downloaded')
         self.assertTrue(self.pump(lambda: str(a.btn_install.cget('state')) != 'disabled' and
@@ -185,12 +198,12 @@ class ServerTab(unittest.TestCase):
         self.assertEqual(open(os.path.join(self.mods, 'a_de.wd'), 'rb').read(), self.blobs['a_de.wd'])
         self.assertIn('enabled', a.stree.set('multi', 'status'))
         self.select('multi')
-        self.assertEqual(a.cmb_lang.get(), 'Deutsch')           # remembers the installed variant
+        self.assertEqual(a.side.lang, 'de')                     # remembers the installed variant
 
     def test_6_switching_language_turns_the_other_off(self):
         a = self.app
         self.select('multi')
-        a.cmb_lang.current(0)
+        a.side.select_lang('en')
         a.install_server_mod()
         self.assertTrue(self.pump(lambda: os.path.exists(os.path.join(self.mods, 'a_en.wd'))))
         self.assertTrue(self.pump(lambda: self.reg.get('a_de.wd') == 0))
@@ -229,14 +242,134 @@ class ServerTab(unittest.TestCase):
         a.root.update()
         a.gtree.selection_set('Cool_Mod.wd')
         sp = a.gside
-        self.assertTrue(self.pump(lambda: 'line 2' in sp.lbl_desc['text']), 'description streamed from the .txt')
-        self.assertEqual(sp.lbl_name['text'], 'Cool_Mod')
-        self.assertIn('InsideTwoWorlds', sp.lbl_credits['text'])
+        self.assertTrue(self.pump(lambda: 'line 2' in sp.text_of(sp.lbl_desc)), 'description streamed from the .txt')
+        self.assertEqual(sp.text_of(sp.lbl_name), 'Cool_Mod')
+        self.assertIn('InsideTwoWorlds', sp.text_of(sp.lbl_credits))
         self.assertTrue(self.pump(lambda: bool(sp.pic['image'])), 'repo picture shown')
         a.gtree.selection_set('Plain.WD')
         a.root.update()
-        self.assertEqual(sp.lbl_name['text'], 'Plain')
-        self.assertIn('no description', sp.lbl_desc['text'])
+        self.assertEqual(sp.text_of(sp.lbl_name), 'Plain')
+        self.assertIn('no description', sp.text_of(sp.lbl_desc))
+
+    def test_92_links_and_copy(self):
+        M, sp = self.M, self.app.side
+        self.assertEqual(M.split_links('see https://a.b/c, and http://x.y/z).'),
+                         [('see ', None), ('https://a.b/c', 'https://a.b/c'), (', and ', None),
+                          ('http://x.y/z', 'http://x.y/z'), (').', None)])
+        opened = []
+        M.webbrowser.open = lambda u: opened.append(u)
+        M.fill_text(sp.lbl_desc, 'Docs: https://example.org/page. Done', 300)
+        self.assertEqual(sp.text_of(sp.lbl_desc), 'Docs: https://example.org/page. Done')
+        ranges = sp.lbl_desc.tag_ranges('link0')
+        self.assertEqual(len(ranges), 2)
+        self.assertEqual(sp.lbl_desc.get(*ranges), 'https://example.org/page')
+        sp.lbl_desc.tag_add('sel', '1.0', 'end-1c')                 # a selection is not a click
+        sp.lbl_desc.event_generate('<ButtonRelease-1>')
+        sp.lbl_desc.tag_remove('sel', '1.0', 'end')
+        self.assertEqual(opened, [])
+        # text can be selected and copied, typing does not change it
+        sp.lbl_desc.tag_add('sel', '1.0', 'end-1c')
+        sp.lbl_desc.event_generate('<<Copy>>')
+        self.assertEqual(self.app.root.clipboard_get(), 'Docs: https://example.org/page. Done')
+        sp.lbl_desc.focus_force()
+        sp.lbl_desc.event_generate('<Key>', keysym='x')
+        self.assertEqual(sp.text_of(sp.lbl_desc), 'Docs: https://example.org/page. Done')
+        self.app.side.mod = None                                    # force the next show() to redraw
+
+    def test_93_search_my_mods(self):
+        a, f = self.app, self.app.flt_server
+        a.notebook.select(1)
+        a.root.update()
+        a._refresh_server_states()
+        def walk(parent=''):
+            out = []
+            for i in a.stree.get_children(parent):
+                out.append(i)
+                out += walk(i)
+            return out
+        vis = lambda: [i for i in walk() if i != '_merged']
+        everything = ['child', 'merged-one', 'multi', 'old-mod']
+        self.assertEqual(sorted(vis()), everything)
+        f.var.set('multi')
+        a.root.update()
+        self.assertEqual(sorted(vis()), ['multi'])
+        self.assertNotIn('_merged', a.stree.get_children(''))       # heading hides with its last child
+        self.assertEqual(f.lbl['text'], '1 / 4')
+        f.var.set('child')                                           # a hit on the child shows and opens its parent
+        a.root.update()
+        self.assertEqual(sorted(vis()), ['child', 'multi'])
+        self.assertTrue(a.stree.item('multi', 'open'))
+        self.assertEqual(f.lbl['text'], '1 / 4')
+        a.stree.item('multi', open=False)
+        f.var.set('multi')
+        a.root.update()
+        f.var.set('Deutscher')                                       # finds words inside descriptions
+        a.root.update()
+        self.assertEqual(vis(), ['multi'])
+        f.var.set('merged')                                          # "merged mod" counts as a word as well
+        a.root.update()
+        self.assertEqual(sorted(vis()), ['child', 'merged-one', 'multi'])
+        self.assertIn('_merged', a.stree.get_children(''))
+        f.var.set('zzz')
+        a.root.update()
+        self.assertEqual(vis(), [])
+        self.assertEqual(f.lbl['text'], 'No match')
+        f.clear()
+        a.root.update()
+        self.assertEqual(sorted(vis()), everything)
+
+    def test_94_suggestions_and_keyboard(self):
+        a, f = self.app, self.app.flt_server
+        a.notebook.select(1)
+        a.root.update()
+        f.entry.focus_force()
+        f.var.set('mu')
+        a.root.update()
+        self.assertTrue(f.visible())
+        self.assertEqual(list(f.box.get(0, 'end')), ['Multi Mod'])
+        self.assertEqual(f._move(1), 'break')
+        self.assertEqual(f.box.curselection(), (0,))
+        self.assertEqual(f._accept(None), 'break')
+        self.assertEqual(f.var.get(), 'Multi Mod')
+        self.assertFalse(f.visible())
+        self.assertEqual(a.stree.get_children(''), ('multi',))
+        self.assertEqual(a.stree.get_children('multi'), ())
+        f.var.set('o')                                               # prefix hits come before substring hits
+        a.root.update()
+        labels = list(f.box.get(0, 'end'))
+        self.assertEqual(labels[0], 'Old Format Mod')
+        f._escape(None)
+        self.assertFalse(f.visible())
+        self.assertEqual(f.var.get(), 'o')
+        f._escape(None)
+        self.assertEqual(f.var.get(), '')
+
+    def test_95_search_installed_and_community(self):
+        a = self.app
+        a.refresh()
+        a.root.update()
+        names = [i for i in a.tree.get_children() if not i.startswith('ROOT::')]
+        self.assertTrue(names, 'some archives are installed by the earlier tests')
+        f = a.flt_inst
+        f.var.set(names[0][:3].lower())
+        a.root.update()
+        shown = [i for i in a.tree.get_children() if not i.startswith('ROOT::')]
+        self.assertTrue(shown and all(names[0][:3].lower() in i.lower() for i in shown))
+        a.refresh()                                                  # a rebuild keeps the filter and does not crash
+        a.root.update()
+        self.assertEqual([i for i in a.tree.get_children() if not i.startswith('ROOT::')], shown)
+        f.clear()
+        a.root.update()
+        self.assertEqual([i for i in a.tree.get_children() if not i.startswith('ROOT::')], names)
+        g = a.flt_gh                                                 # community: name and description
+        a.gh_desc['Cool_Mod.wd'] = 'Adds dragons and Katana swords'
+        a._gh_search_rows()
+        g.var.set('katana')
+        a.root.update()
+        self.assertEqual(a.gtree.get_children(''), ('Cool_Mod.wd',))
+        g.clear()
+        a.root.update()
+        self.assertEqual(len(a.gtree.get_children('')), 2)
 
 
 if __name__ == '__main__':
