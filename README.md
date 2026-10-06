@@ -81,6 +81,14 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.4.1 (06.10.2026)
+
+- **Self-update fixed:** after "Update now" the new version could fail to start
+  with "Failed to load Python DLL ... python313.dll" (the new exe tried to reuse
+  the temp folder of the old one). The update now starts it with a clean
+  environment. Versions older than 2.4.1 still start the new exe the old way, so
+  after the first update from them just start the tool again once.
+
 ### v2.4.0 (05.10.2026)
 
 - **Search row in all three list tabs** (Installed mods, My Mods, Community):

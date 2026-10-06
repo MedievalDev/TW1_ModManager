@@ -157,9 +157,25 @@ def swap_script(exe, new, pid):
         'exit /b 1',
         ':moved',
         f'move /y "{new}" "{exe}" >nul 2>&1 || move /y "{old}" "{exe}" >nul',
+        'set PYINSTALLER_RESET_ENVIRONMENT=1',
+        'set _MEIPASS2=',
         f'start "" "{exe}"',
         '(goto) 2>nul & del "%~f0"',
         ''])
+
+
+def clean_env(env=None):
+    """Environment for the process that starts the new exe. A PyInstaller one-file exe
+    leaves variables behind (_PYI_*, _MEIPASS2) that tell a second exe at the same path
+    to reuse the first one's temp folder, which is gone once the first one ends: the new
+    version then fails with "Failed to load Python DLL ... _MEIxxxxx\\python313.dll".
+    PYINSTALLER_RESET_ENVIRONMENT=1 makes the new exe unpack on its own (2.4.1)."""
+    env = dict(os.environ if env is None else env)
+    for key in list(env):
+        if key.startswith('_PYI_') or key.upper() == '_MEIPASS2':
+            del env[key]
+    env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+    return env
 
 
 def start_swap(exe, new, pid=None):
@@ -175,7 +191,7 @@ def start_swap(exe, new, pid=None):
         flags = (getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                  | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0))
     subprocess.Popen(['cmd', '/c', path], creationflags=flags,
-                     close_fds=True, cwd=os.path.dirname(exe))
+                     close_fds=True, cwd=os.path.dirname(exe), env=clean_env())
     return path
 
 
