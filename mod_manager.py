@@ -832,6 +832,10 @@ class ModSidePanel:
         self.lbl_meta.pack(fill='x')
         self.lbl_desc = read_only_text(self.body)
         self.lbl_desc.pack(fill='x', pady=(8, 0))
+        self.lbl_others_h = ttk.Label(self.body, text=tr('Other versions'), foreground=theme.GOLD, font=theme.FONT_BOLD)
+        self.lbl_others = read_only_text(self.body)
+        self.others = []            # [(id, name)] of the entries that unfold under this mod
+        self.on_pick = None
         self.btn_readme = ttk.Button(self.body, command=self._toggle_readme, style='Slim.TButton')
         self.txt_readme = read_only_text(self.body, font=theme.FONT_SMALL, bg=theme.FIELD)
         self.txt_readme.configure(height=14, padx=6, pady=4, highlightthickness=1, highlightbackground=theme.LINE)
@@ -867,10 +871,12 @@ class ModSidePanel:
         else:
             self.txt_readme.pack_forget()
 
-    def show(self, mod):
+    def show(self, mod, others=None, on_pick=None):
         if mod is not None and mod is self.mod:      # same selection again: keep picture and readme state
             return
         self.mod = mod
+        self.others = list(others or [])
+        self.on_pick = on_pick
         self._clear_langs()
         self.canvas.yview_moveto(0)
         for w in (self.btn_readme, self.txt_readme, self.lbl_tags, self.lbl_credits_h, self.lbl_credits):
@@ -886,6 +892,24 @@ class ModSidePanel:
         self.idx = 0
         self._show_image()
         self._render_texts()
+
+    def _fill_others(self):
+        """One clickable line per unfolded entry; a click selects it in the list."""
+        w = self.lbl_others
+        for tag in w.tag_names():
+            if tag.startswith('pick'):
+                w.tag_delete(tag)
+        w.delete('1.0', 'end')
+        for i, (iid, name) in enumerate(self.others):
+            tag = f'pick{i}'
+            w.insert('end', ('\n' if i else '') + '\u25b8 ', ())
+            w.insert('end', name, (tag,))
+            w.tag_configure(tag, foreground=theme.PLAYER_COLOR, underline=True)
+            w.tag_bind(tag, '<Enter>', lambda e: w.configure(cursor='hand2'))
+            w.tag_bind(tag, '<Leave>', lambda e: w.configure(cursor='xterm'))
+            w.tag_bind(tag, '<ButtonRelease-1>',
+                       lambda e, k=iid: None if w.tag_ranges('sel') or not self.on_pick else self.on_pick(k))
+        w.configure(height=len(self.others))
 
     def _clear_langs(self):
         for w in self.lang_box.winfo_children():
@@ -924,12 +948,17 @@ class ModSidePanel:
         mod = self.mod
         if mod is None:
             return
-        for w in (self.btn_readme, self.txt_readme, self.lbl_tags, self.lbl_credits_h, self.lbl_credits):
+        for w in (self.lbl_others_h, self.lbl_others, self.btn_readme, self.txt_readme, self.lbl_tags,
+                  self.lbl_credits_h, self.lbl_credits):
             w.pack_forget()
         self._put(self.lbl_name, mod.get('name', ''))
         meta = [x for x in ('v' + str(mod['version']) if mod.get('version') else '', mod.get('author', '')) if x]
         self._put(self.lbl_meta, '  \u00b7  '.join(meta))
         self._put(self.lbl_desc, mod_text(mod, 'description', self.text_lang))
+        if self.others:
+            self._fill_others()
+            self.lbl_others_h.pack(anchor='w', pady=(10, 0))
+            self.lbl_others.pack(fill='x')
         readme = mod_text(mod, 'readme', self.text_lang).strip()
         if readme:
             self.btn_readme.pack(anchor='w', pady=(10, 0))
@@ -1940,15 +1969,16 @@ class App:
         self.stree.delete(*self.stree.get_children())
         reg = registry_mods()
         mods = sorted(self.catalog.get('mods', []), key=lambda m: m.get('name', '').lower())
-        top = [m for m in mods if m.get('group') != 'merged']
-        topids = {m['id'] for m in top}
-        kids, orphans = {}, []
-        for m in mods:                      # a merged mod hangs under the mod it builds on ("base")
-            if m.get('group') == 'merged':
-                if m.get('base') in topids:
-                    kids.setdefault(m['base'], []).append(m)
-                else:
-                    orphans.append(m)
+        plain = [m for m in mods if m.get('group') != 'merged']
+        plain_ids = {m['id'] for m in plain}
+        parents = {m['id'] for m in plain if m.get('base') not in plain_ids}      # entries that may unfold
+        kids, nested = {}, set()
+        for m in mods:                      # an entry hangs under the mod it builds on or belongs to ("base")
+            if m.get('base') in parents and m['id'] != m['base']:
+                kids.setdefault(m['base'], []).append(m)
+                nested.add(m['id'])
+        top = [m for m in plain if m['id'] not in nested]
+        orphans = [m for m in mods if m.get('group') == 'merged' and m['id'] not in nested]
         rows = []
 
         def add(mod, parent):
@@ -1989,12 +2019,23 @@ class App:
 
     def _show_desc(self):
         mod = self._selected_mod()
-        self.side.show(mod)
+        others = [(m['id'], m['name']) for m in self.catalog.get('mods', [])
+                  if mod and m.get('base') == mod['id'] and m['id'] != mod['id']] if self.catalog else []
+        others.sort(key=lambda t: t[1].lower())
+        self.side.show(mod, others, self._pick_server_mod)
         vs = mod_variants(mod) if mod else []
         if len(vs) > 1:
             installed = next((v for v in vs if os.path.exists(os.path.join(self.mods_dir, v['file']))), None)
             want = installed or next((v for v in vs if v.get('lang') == _LANG), vs[0])
             self.side.set_variants([v.get('lang') for v in vs], want.get('lang'))
+
+    def _pick_server_mod(self, iid):
+        if self.stree.exists(iid):
+            parent = self.stree.parent(iid)
+            if parent:
+                self.stree.item(parent, open=True)
+            self.stree.selection_set(iid)
+            self.stree.see(iid)
 
     def _chosen_variant(self, mod):
         vs = mod_variants(mod)
@@ -2632,7 +2673,7 @@ DE = {
         'Legt Mods von Two Worlds 1 ein, schaltet sie ein und aus - die .wd-Archive im\nMods-Ordner und ihre Schalter in der Registry. Nichts wird je geloescht.\nRegistry-Logik nach buglords Mod Selector.',
     'Merged mods': 'Zusammengefuehrte Mods', 'Readme': 'Readme', 'Credits': 'Credits', 'Select a mod': 'Mod auswaehlen',
     'No pictures for this mod yet.': 'Noch keine Bilder zu dieser Mod.', '(picture not available)': '(Bild nicht erreichbar)',
-    'Search': 'Suche', 'No match': 'Keine Treffer', 'Copy': 'Kopieren', 'Select all': 'Alles markieren',
+    'Other versions': 'Weitere Versionen', 'Search': 'Suche', 'No match': 'Keine Treffer', 'Copy': 'Kopieren', 'Select all': 'Alles markieren',
     'loading picture...': 'lade Bild...', 'Archive: {name}': 'Archiv: {name}',
 }
 

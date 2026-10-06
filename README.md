@@ -81,6 +81,12 @@ CC0 — do what you want with it.
 
 ## Changelog
 
+### v2.5.0 (06.10.2026)
+
+- **Other versions unfold under a mod.** An entry with `base` hangs under
+  that mod (merged mods keep their "(merged mod)" mark), and the side panel
+  of the main mod lists them under "Other versions"; a click selects one.
+
 ### v2.4.1 (06.10.2026)
 
 - **Self-update fixed:** after "Update now" the new version could fail to start

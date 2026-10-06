@@ -228,6 +228,8 @@ Ein Klick auf eine Mod oeffnet rechts die Seitenleiste: Bilder mit Pfeilen
 zum Durchschalten, Name, Beschreibung, die Readme zum Aufklappen, Tags und
 Credits (alles, was die Mod mitbringt). Merged mods (mehrere andere Mods in einer Datei) stehen aufklappbar unter der Mod,
 auf der sie aufbauen, mit dem Zusatz "(merged mod)"; ihre Credits nennen die Urheber.
+Hat eine Mod weitere Fassungen (zum Beispiel nur die Fehlerbehebungen), klappen sie unter ihr
+auf, und die Seitenleiste nennt sie im Abschnitt "Weitere Versionen" (anklickbar).
 Der Knopf "Install / update" sitzt in der Seitenleiste unter dem Bild. Gibt es
 eine Mod in mehreren Sprachen, steht rechts daneben ein Schalter DE / EN
 (Vorgabe: die Sprache des Tools); er schaltet auch Beschreibung und Readme um.
@@ -277,6 +279,8 @@ Clicking a mod opens the side panel on the right: pictures with arrows to
 page through, name, description, the readme (click to unfold), tags and
 credits (whatever the mod brings along). Merged mods (several other mods in one file) sit unfolded under the mod they
 build on, marked "(merged mod)"; their credits name the authors.
+If a mod has further versions (for example only the bug fixes), they unfold under it and the side
+panel lists them under "Other versions" (clickable).
 The "Install / update" button sits in the side panel under the picture. If a
 mod exists in several languages, a DE / EN switch sits right next to it
 (default: the tool language); it also switches description and readme.

@@ -66,6 +66,8 @@ class ServerTab(unittest.TestCase):
              'variants': [var('en', 'a_en.wd')]},
             {'id': 'child', 'name': 'Child Merge', 'group': 'merged', 'base': 'multi', 'version': '1.0',
              'variants': [var('en', 'a_en.wd')]},
+            {'id': 'sub', 'name': 'Sub Version', 'group': 'own', 'base': 'multi', 'version': '1.0',
+             'file': 'old.wd', 'url': base + 'old.wd'},
         ]}
 
         M.LOGO_URL = base + 'p2.png'             # stands in for the Steam logo
@@ -129,6 +131,8 @@ class ServerTab(unittest.TestCase):
         self.assertEqual(t.parent('old-mod'), '')
         self.assertEqual(t.item('_merged', 'text'), 'Merged mods')
         self.assertEqual(t.item('child', 'text'), 'Child Merge (merged mod)')
+        self.assertEqual(t.parent('sub'), 'multi')                  # a plain "other version" nests too
+        self.assertEqual(t.item('sub', 'text'), 'Sub Version')      # without the merged mark
         self.assertFalse(t.item('multi', 'open'))                  # folded until the user unfolds it
         self.assertEqual(list(t.get_children('')), ['multi', 'old-mod', '_merged'])   # sorted by name
 
@@ -288,18 +292,18 @@ class ServerTab(unittest.TestCase):
                 out += walk(i)
             return out
         vis = lambda: [i for i in walk() if i != '_merged']
-        everything = ['child', 'merged-one', 'multi', 'old-mod']
+        everything = ['child', 'merged-one', 'multi', 'old-mod', 'sub']
         self.assertEqual(sorted(vis()), everything)
         f.var.set('multi')
         a.root.update()
         self.assertEqual(sorted(vis()), ['multi'])
         self.assertNotIn('_merged', a.stree.get_children(''))       # heading hides with its last child
-        self.assertEqual(f.lbl['text'], '1 / 4')
+        self.assertEqual(f.lbl['text'], '1 / 5')
         f.var.set('child')                                           # a hit on the child shows and opens its parent
         a.root.update()
         self.assertEqual(sorted(vis()), ['child', 'multi'])
         self.assertTrue(a.stree.item('multi', 'open'))
-        self.assertEqual(f.lbl['text'], '1 / 4')
+        self.assertEqual(f.lbl['text'], '1 / 5')
         a.stree.item('multi', open=False)
         f.var.set('multi')
         a.root.update()
@@ -370,6 +374,21 @@ class ServerTab(unittest.TestCase):
         g.clear()
         a.root.update()
         self.assertEqual(len(a.gtree.get_children('')), 2)
+
+    def test_96_other_versions_panel(self):
+        a, sp = self.app, self.app.side
+        self.select('multi')
+        a.root.update()
+        self.assertEqual([n for i, n in sp.others], ['Child Merge', 'Sub Version'])
+        self.assertEqual(sp.lbl_others_h['text'], 'Other versions')
+        self.assertIn('Sub Version', sp.text_of(sp.lbl_others))
+        self.assertEqual(sp.lbl_others.winfo_manager(), 'pack')
+        sp.on_pick('sub')                                           # a click on the line selects the entry in the list
+        a.root.update()
+        self.assertEqual(a.stree.selection(), ('sub',))
+        self.assertEqual(sp.lbl_others.winfo_manager(), '')         # a version without versions of its own shows none
+        self.select('old-mod')
+        self.assertEqual(sp.lbl_others_h.winfo_manager(), '')
 
 
 if __name__ == '__main__':
